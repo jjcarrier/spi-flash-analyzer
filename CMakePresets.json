@@ -1,0 +1,88 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 19,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "vs2026-x64-debug",
+      "displayName": "Visual Studio Debug",
+      "generator": "Visual Studio 18 2026",
+      "description": "Use Visual Studio 2026 generator for x64 Debug build.",
+      "binaryDir": "${sourceDir}/build/vs2026-x64-debug",
+      "architecture": {
+        "value": "x64"
+      }
+    },
+    {
+      "name": "vs2026-x64-release",
+      "displayName": "Visual Studio Release",
+      "generator": "Visual Studio 18 2026",
+      "description": "Use Visual Studio 2026 generator for x64 Release build.",
+      "binaryDir": "${sourceDir}/build/vs2026-x64-release",
+      "architecture": {
+        "value": "x64"
+      }
+    },
+    {
+      "name": "ninja-debug",
+      "displayName": "Ninja Debug (MSVC)",
+      "generator": "Ninja",
+      "description": "Use Ninja generator with MSVC for Debug build.",
+      "binaryDir": "${sourceDir}/build/ninja-debug",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "toolset": {
+        "value": "host=x64",
+        "strategy": "external"
+      },
+      "toolchainFile": "${sourceDir}/cmake/msvc-x64-toolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "ninja-release",
+      "displayName": "Ninja Release (MSVC)",
+      "generator": "Ninja",
+      "description": "Use Ninja generator with MSVC for Release build.",
+      "binaryDir": "${sourceDir}/build/ninja-release",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "toolset": {
+        "value": "host=x64",
+        "strategy": "external"
+      },
+      "toolchainFile": "${sourceDir}/cmake/msvc-x64-toolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs2026-x64-debug",
+      "configurePreset": "vs2026-x64-debug"
+    },
+    {
+      "name": "vs2026-x64-release",
+      "configurePreset": "vs2026-x64-release"
+    },
+    {
+      "name": "ninja-debug",
+      "configurePreset": "ninja-debug"
+    },
+    {
+      "name": "ninja-release",
+      "configurePreset": "ninja-release"
+    }
+  ]
+}

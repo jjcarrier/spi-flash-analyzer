@@ -1,0 +1,9 @@
+
+.vs/
+CMakeFiles/
+CMakeCache.txt
+build/
+vc2026/SpiFlashAnalyzer/x64/
+vc2026/x64/
+*.vcxproj.user
+.vscode/settings.json

@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="SpiFlash.vcxproj" Id="b396b091-5789-4294-a4ee-956a3e8cd46e" />
+</Solution>

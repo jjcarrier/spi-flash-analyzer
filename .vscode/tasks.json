@@ -1,0 +1,46 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "cmake",
+			"label": "CMake: build",
+			"command": "build",
+			"targets": [
+				"[N/A - Select Kit]"
+			],
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "CMake template build task"
+		},
+		{
+			"label": "Build Visual Studio Project (Debug x64)",
+			"type": "shell",
+			"command": "msbuild",
+			"args": [
+				"vc2026/SpiFlash.vcxproj",
+				"/p:Configuration=Debug",
+				"/p:Platform=x64"
+			],
+			"group": "build",
+			"problemMatcher": [
+				"$msCompile"
+			],
+			"detail": "Builds the Visual Studio project in Debug x64 mode."
+		},
+		{
+			"label": "Build Visual Studio Project (Release x64)",
+			"type": "shell",
+			"command": "msbuild",
+			"args": [
+				"vc2026/SpiFlash.vcxproj",
+				"/p:Configuration=Release",
+				"/p:Platform=x64"
+			],
+			"group": "build",
+			"problemMatcher": [
+				"$msCompile"
+			],
+			"detail": "Builds the Visual Studio project in Release x64 mode."
+		}
+	]
+}

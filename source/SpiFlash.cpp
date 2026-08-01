@@ -1,402 +1,681 @@
 /*
-MIT License
+ * MIT License
+ *
+ * Copyright(c) 2026 Jon Carrier
+ * Copyright(c) 2017 Jerzy Kasenberg (original author)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files(the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions :
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
-Copyright(c) 2017 Jerzy Kasenberg
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files(the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions :
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*/
-#include <cstdlib>
 #include "SpiFlash.h"
+#include "SpiFlashConstants.h"
+#include <algorithm>
+#include <cstddef>
 
-void SpiFlash::GenerateByte(U8 b, std::vector<U8> &bits)
+// ---------------------------------------------------------------------------
+// Static read-only tables.
+//
+// Data is organized manufacturer by manufacturer:
+//   1. BitField arrays for each register
+//   2. RegisterData objects referencing those arrays
+//   3. SpiCmdData arrays for the command set
+//   4. The kCmdSets master table
+//
+// SpiCmdData aggregate-init column order:
+//   { code, mode, cmdOp, addrBits, modeArgs, modeData, modeChange,
+//     dummyCount, dummyBytes, dummyCycles, contRead,
+//     {name0, name1, name2, name3},
+//     {reg0,  reg1,  reg2,  reg3 } }
+//
+//   addrBits: 0=none, 0xFF=use configured address width, 16=explicit 16-bit.
+//   modeArgs: address/mode-byte phase I/O width (0=single, 2=dual, 4=quad).
+//   modeData: data phase I/O width (0=single, 2=dual, 4=quad).
+//   modeChange: switch bus mode after command (0=none, CM_1, CM_4).
+// ---------------------------------------------------------------------------
+
+static constexpr uint8_t kAddrGlobal = 0xFF; // use configured address width
+static constexpr uint8_t kAddr16     = 16;   // explicit 16-bit address (ADDR2)
+
+// ===========================================================================
+// COMMON (id = 0)
+// ===========================================================================
+
+static const BitField kBits_SR1_Common[] = {
+    { "SRP0", 7, 7 },
+    { "WEL",  1, 1 },
+    { "BUSY", 0, 0 }
+};
+static const BitField kBits_SR2_Common[] = {
+    { "SUS",  7, 7 },
+    { "QE",   1, 1 },
+    { "SRP1", 0, 0 }
+};
+static const RegisterData kSR1_Common = { "SR1", 8, kBits_SR1_Common, 3 };
+static const RegisterData kSR2_Common = { "SR2", 8, kBits_SR2_Common, 3 };
+
+static const SpiCmdData kCmds_Common[] = {
+    /* mCode, mMode, mCmdOp, mAddressBits, mModeArgs, mModeData, mModeChange, mDummyCount, mDummyBytes, mDummyCycles, mContinuousRead, nNames[], mRegList[] */
+    // Read commands
+    { 0x05, CM_14, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDSR", "Read SR1", nullptr, nullptr },                     { &kSR1_Common, nullptr, nullptr, nullptr }      },
+    { 0x35, CM_14, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDSR2", "Read SR2", nullptr, nullptr },                    { &kSR2_Common, nullptr, nullptr, nullptr }      },
+    { 0x03, CM_1,  OP_DATA_READ,  kAddrGlobal, 0, 0, 0, 0, false, false, false, { "RD", "Read Data", nullptr, nullptr },                      { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x0B, CM_1,  OP_DATA_READ,  kAddrGlobal, 0, 0, 0, 1, true,  false, false, { "FRD", "Fast Read", nullptr, nullptr },                     { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x3B, CM_1,  OP_DATA_READ,  kAddrGlobal, 0, 2, 0, 1, true,  false, false, { "DRD", "Fast Read Dual Output", nullptr, nullptr },         { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x6B, CM_1,  OP_DATA_READ,  kAddrGlobal, 0, 4, 0, 1, true,  false, false, { "QRD", "Fast Read Quad Output", nullptr, nullptr },         { nullptr, nullptr, nullptr, nullptr }           },
+    { 0xBB, CM_1,  OP_DATA_READ,  kAddrGlobal, 2, 0, 0, 0, false, false, true,  { "DRIO", "Fast Read Dual I/O", nullptr, nullptr },           { nullptr, nullptr, nullptr, nullptr }           },
+    { 0xEB, CM_1,  OP_DATA_READ,  kAddrGlobal, 4, 0, 0, 2, true,  false, true,  { "QRIO", "Fast Read Quad I/O", nullptr, nullptr },           { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x5A, CM_1,  OP_DATA_READ,  kAddrGlobal, 0, 0, 0, 1, true,  false, false, { "SFDP", "Read SFDP Register", nullptr, nullptr },           { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x9F, CM_14, OP_DATA_READ,  0,           0, 0, 0, 0, false, false, false, { "JID", "Read JEDEC ID", nullptr, nullptr },                 { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x90, CM_1,  OP_DATA_READ,  kAddrGlobal, 0, 0, 0, 0, false, false, false, { "MFID", "Read Manufacturer, Device ID", nullptr, nullptr }, { nullptr, nullptr, nullptr, nullptr }           },
+    // Write / control
+    { 0x06, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "WREN", "Write Enable", nullptr, nullptr },                 { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x04, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "WRDI", "Write Disable", nullptr, nullptr },                { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x01, CM_14, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRSR", "Write SR", nullptr, nullptr },                     { &kSR1_Common, &kSR2_Common, nullptr, nullptr } },
+    { 0x31, CM_14, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRSR2", "Write SR2", nullptr, nullptr },                   { &kSR2_Common, nullptr, nullptr, nullptr }      },
+    { 0x02, CM_14, OP_DATA_WRITE, kAddrGlobal, 0, 0, 0, 0, false, false, false, { "PP", "Page Program", nullptr, nullptr },                   { nullptr, nullptr, nullptr, nullptr }           },
+    // Erase
+    { 0x20, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "SE", "SE4", "4KB Sector Erase", nullptr },                 { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x52, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "BE", "BE32", "32KB Block Erase", nullptr },                { nullptr, nullptr, nullptr, nullptr }           },
+    { 0xD8, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "BE", "BE64", "64KB Block Erase", nullptr },                { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x60, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "CE", "Chip Erase", nullptr, nullptr },                     { nullptr, nullptr, nullptr, nullptr }           },
+    { 0xC7, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "CE", "Chip Erase", nullptr, nullptr },                     { nullptr, nullptr, nullptr, nullptr }           },
+    // Misc
+    { 0x75, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "SUSP", "Erase/Program Suspend", nullptr, nullptr },        { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x7A, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "RESM", "Erase/Program Resume", nullptr, nullptr },         { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x66, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "RSTEN", "Enable Reset", nullptr, nullptr },                { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x99, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "RST", "Reset", nullptr, nullptr },                         { nullptr, nullptr, nullptr, nullptr }           },
+    { 0xB9, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "DN", "Power Down", nullptr, nullptr },                     { nullptr, nullptr, nullptr, nullptr }           },
+    { 0xAB, CM_14, OP_DATA_READ,  0,           0, 0, 0, 3, true,  false, false, { "UP", "Release Power Down", nullptr, nullptr },             { nullptr, nullptr, nullptr, nullptr }           },
+};
+
+// ===========================================================================
+// RENESAS (id = 0x1F, parent = 0)
+// ===========================================================================
+
+static const BitField kBits_SR1_Renesas[] = {
+    { "SRP0", 7, 7 },
+    { "BPB",  6, 2 },
+    { "WEL",  1, 1 },
+    { "BUSY", 0, 0 }
+};
+static const BitField kBits_SR2_Renesas[] = {
+    { "SUS1", 7, 7 },
+    { "CMP",  6, 6 },
+    { "LB",   5, 3 },
+    { "SUS2", 2, 2 },
+    { "QE",   1, 1 },
+    { "SRP1", 0, 0 }
+};
+static const BitField kBits_SR3_Renesas[] = {
+    { "RES2", 7, 7 },
+    { "DRV",  6, 5 },
+    { "RES1", 4, 0 }
+};
+static const RegisterData kSR1_Renesas = { "SR1", 8, kBits_SR1_Renesas, 4 };
+static const RegisterData kSR2_Renesas = { "SR2", 8, kBits_SR2_Renesas, 6 };
+static const RegisterData kSR3_Renesas = { "SR3", 8, kBits_SR3_Renesas, 3 };
+
+static const SpiCmdData kCmds_Renesas[] = {
+    { 0x15, CM_14, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDSR3", "Read SR3", nullptr, nullptr },                             { &kSR3_Renesas, nullptr, nullptr, nullptr } },
+    { 0x92, CM_1,  OP_DATA_READ,  kAddrGlobal, 2, 0, 0, 1, true,  false, false, { "MFID", "Read Manufacturer, Device ID DUAL I/O", nullptr, nullptr }, { nullptr, nullptr, nullptr, nullptr }       },
+    { 0x94, CM_1,  OP_DATA_READ,  kAddrGlobal, 4, 0, 0, 3, true,  false, false, { "MFID", "Read Manufacturer, Device ID QUAD I/O", nullptr, nullptr }, { nullptr, nullptr, nullptr, nullptr }       },
+    { 0x4B, CM_1,  OP_DATA_READ,  0,           0, 0, 0, 4, true,  false, false, { "UID", "Read Unique ID number", nullptr, nullptr },                  { nullptr, nullptr, nullptr, nullptr }       },
+    { 0x48, CM_1,  OP_DATA_READ,  kAddrGlobal, 0, 0, 0, 1, true,  false, false, { "RDSECR", "Read Security Registers", nullptr, nullptr },             { nullptr, nullptr, nullptr, nullptr }       },
+    { 0x01, CM_14, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRSR1", "Write SR1", nullptr, nullptr },                            { &kSR1_Renesas, nullptr, nullptr, nullptr } },
+    { 0x31, CM_14, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRSR2", "Write SR2", nullptr, nullptr },                            { &kSR2_Renesas, nullptr, nullptr, nullptr } },
+    { 0x11, CM_14, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRSR3", "Write SR3", nullptr, nullptr },                            { &kSR3_Renesas, nullptr, nullptr, nullptr } },
+    { 0x50, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "WRENVSR", "Write Enable for Volatile SR", nullptr, nullptr },       { nullptr, nullptr, nullptr, nullptr }       },
+    { 0x77, CM_1,  OP_DATA_WRITE, 0,           4, 0, 0, 3, true,  false, false, { "SBW", "Set Burst with Wrap", nullptr, nullptr },                    { nullptr, nullptr, nullptr, nullptr }       },
+    { 0x42, CM_1,  OP_DATA_WRITE, kAddrGlobal, 0, 0, 0, 0, false, false, false, { "PRSECR", "Program Security Registers", nullptr, nullptr },          { nullptr, nullptr, nullptr, nullptr }       },
+    { 0xF2, CM_14, OP_DATA_WRITE, kAddrGlobal, 0, 0, 0, 0, false, false, false, { "PP", "Page Program", nullptr, nullptr },                            { nullptr, nullptr, nullptr, nullptr }       },
+    { 0x32, CM_1,  OP_DATA_WRITE, kAddrGlobal, 0, 4, 0, 0, false, false, false, { "QPP", "Quad Input Page Program", nullptr, nullptr },                { nullptr, nullptr, nullptr, nullptr }       },
+    { 0x44, CM_1,  OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "ERSECR", "Erase Security Registers", nullptr, nullptr },            { nullptr, nullptr, nullptr, nullptr }       },
+};
+
+// ===========================================================================
+// WINBOND (id = 0xEF, parent = 0)
+// ===========================================================================
+
+static const BitField kBits_SR1_Winbond[] = {
+    { "SRP0", 7, 7 },
+    { "TPB",  6, 6 },
+    { "TP",   5, 5 },
+    { "BPB",  4, 2 },
+    { "WEL",  1, 1 },
+    { "BUSY", 0, 0 }
+};
+static const BitField kBits_SR2_Winbond[] = {
+    { "SUS",  7, 7 },
+    { "CMP",  6, 6 },
+    { "LB",   5, 3 },
+    { "QE",   1, 1 },
+    { "SRP1", 0, 0 }
+};
+static const BitField kBits_SR3_Winbond[] = {
+    { "HOLD/RESET", 7, 7 },
+    { "DRV",        6, 5 },
+    { "WPS",        2, 2 }
+};
+static const RegisterData kSR1_Winbond = { "SR1", 8, kBits_SR1_Winbond, 6 };
+static const RegisterData kSR2_Winbond = { "SR2", 8, kBits_SR2_Winbond, 5 };
+static const RegisterData kSR3_Winbond = { "SR3", 8, kBits_SR3_Winbond, 3 };
+
+static const SpiCmdData kCmds_Winbond[] = {
+    { 0x50, CM_14, OP_NO_DATA,    0,           0, 0, 0,    0, false, false, false, { "WRENVSR", "Write Enable for Volatile SR", nullptr, nullptr },       { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x35, CM_14, OP_REG_READ,   0,           0, 0, 0,    0, false, false, false, { "RDSR2", "Read SR2", nullptr, nullptr },                             { &kSR2_Winbond, nullptr, nullptr, nullptr }       },
+    { 0x15, CM_14, OP_REG_READ,   0,           0, 0, 0,    0, false, false, false, { "RDSR3", "Read SR3", nullptr, nullptr },                             { &kSR3_Winbond, nullptr, nullptr, nullptr }       },
+    { 0x01, CM_14, OP_REG_WRITE,  0,           0, 0, 0,    0, false, false, false, { "WRSR", "Write SR", nullptr, nullptr },                              { &kSR1_Winbond, &kSR2_Winbond, nullptr, nullptr } },
+    { 0x31, CM_14, OP_REG_WRITE,  0,           0, 0, 0,    0, false, false, false, { "WRSR2", "Write SR2", nullptr, nullptr },                            { &kSR2_Winbond, nullptr, nullptr, nullptr }       },
+    { 0x11, CM_14, OP_REG_WRITE,  0,           0, 0, 0,    0, false, false, false, { "WRSR3", "Write SR3", nullptr, nullptr },                            { &kSR3_Winbond, nullptr, nullptr, nullptr }       },
+    { 0xEB, CM_4,  OP_DATA_READ,  kAddrGlobal, 4, 0, 0,    0, false, false, true,  { "QRIO", "Fast Read Quad I/O", nullptr, nullptr },                    { nullptr, nullptr, nullptr, nullptr }             },
+    { 0xE7, CM_14, OP_DATA_READ,  kAddrGlobal, 4, 0, 0,    1, true,  false, true,  { "W4RD", "Word Read Quad I/O", nullptr, nullptr },                    { nullptr, nullptr, nullptr, nullptr }             },
+    { 0xE3, CM_14, OP_DATA_READ,  kAddrGlobal, 4, 0, 0,    0, false, false, true,  { "O8RD", "Octal Word Read Quad I/O", nullptr, nullptr },              { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x36, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0,    0, false, false, false, { "IBL",  "Individual Block/Sector Lock", nullptr, nullptr },          { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x39, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0,    0, false, false, false, { "IBUL", "Individual Block/Sector Unlock", nullptr, nullptr },        { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x3D, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0,    0, false, false, false, { "RDBL", "Read Block/Sector Lock", nullptr, nullptr },                { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x7E, CM_14, OP_NO_DATA,    0,           0, 0, 0,    0, false, false, false, { "GBL",  "Global Block/Sector Lock", nullptr, nullptr },              { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x98, CM_14, OP_NO_DATA,    0,           0, 0, 0,    0, false, false, false, { "GBUL", "Global Block/Sector Unlock", nullptr, nullptr },            { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x77, CM_1,  OP_DATA_WRITE, 0,           4, 0, 0,    3, true,  false, false, { "SBW", "Set Burst with Wrap", nullptr, nullptr },                    { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x32, CM_1,  OP_DATA_WRITE, kAddrGlobal, 0, 4, 0,    0, false, false, false, { "QPP", "Quad Input Page Program", nullptr, nullptr },                { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x92, CM_1,  OP_DATA_READ,  kAddrGlobal, 2, 0, 0,    1, true,  false, false, { "MFID", "Read Manufacturer, Device ID DUAL I/O", nullptr, nullptr }, { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x94, CM_1,  OP_DATA_READ,  kAddrGlobal, 4, 0, 0,    3, true,  false, false, { "MFID", "Read Manufacturer, Device ID QUAD I/O", nullptr, nullptr }, { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x4B, CM_1,  OP_DATA_READ,  0,           0, 0, 0,    4, true,  false, false, { "UID", "Read Unique ID number", nullptr, nullptr },                  { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x44, CM_1,  OP_NO_DATA,    kAddrGlobal, 0, 0, 0,    0, false, false, false, { "ERSECR", "Erase Security Registers", nullptr, nullptr },            { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x42, CM_1,  OP_DATA_WRITE, kAddrGlobal, 0, 0, 0,    0, false, false, false, { "PRSECR", "Program Security Registers", nullptr, nullptr },          { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x48, CM_1,  OP_DATA_READ,  kAddrGlobal, 0, 0, 0,    1, true,  false, false, { "RDSECR", "Read Security Registers", nullptr, nullptr },             { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x38, CM_1,  OP_NO_DATA,    0,           0, 0, CM_4, 0, false, false, false, { "QPIEN", "Enter QPI Mode", nullptr, nullptr },                       { nullptr, nullptr, nullptr, nullptr }             },
+    // QPI-only commands
+    { 0x0B, CM_4,  OP_DATA_READ,  kAddrGlobal, 0, 0, 0,    1, true,  false, false, { "FRD",  "Fast Read", nullptr, nullptr },                             { nullptr, nullptr, nullptr, nullptr }             },
+    { 0xC0, CM_4,  OP_DATA_WRITE, 0,           0, 0, 0,    0, false, false, false, { "SRP",  "Set Read Parameters", nullptr, nullptr },                   { nullptr, nullptr, nullptr, nullptr }             },
+    { 0x0C, CM_4,  OP_DATA_READ,  kAddrGlobal, 0, 0, 0,    1, true,  false, true,  { "BRW",  "Burst Read with Wrap", nullptr, nullptr },                  { nullptr, nullptr, nullptr, nullptr }             },
+    { 0xFF, CM_14, OP_NO_DATA,    0,           0, 0, CM_1, 0, false, false, false, { "QPIDI", "Exit QPI Mode", nullptr, nullptr },                        { nullptr, nullptr, nullptr, nullptr }             },
+};
+
+// ===========================================================================
+// MACRONIX (id = 0xC2, parent = 0)
+// ===========================================================================
+
+static const BitField kBits_SR1_Macronix[] = {
+    { "SRWD", 7, 7 },
+    { "QE",   6, 6 },
+    { "BPB",  5, 2 },
+    { "WEL",  1, 1 },
+    { "WIP",  0, 0 }
+};
+static const BitField kBits_CR1_Macronix[] = {
+    { "DC", 6, 6 },
+    { "TB", 3, 3 }
+};
+static const BitField kBits_CR2_Macronix[] = {
+    { "L/H", 1, 1 }
+};
+static const BitField kBits_SecReg_Macronix[] = {
+    { "E_FAIL", 6, 6 },
+    { "P_FAIL", 5, 5 },
+    { "ESB",    3, 3 },
+    { "PSB",    2, 2 },
+    { "LDSO",   1, 1 },
+    { "SOTP",   0, 0 }
+};
+static const RegisterData kSR1_Macronix    = { "SR1", 8, kBits_SR1_Macronix, 5 };
+static const RegisterData kCR1_Macronix    = { "CR1", 8, kBits_CR1_Macronix, 2 };
+static const RegisterData kCR2_Macronix    = { "CR2", 8, kBits_CR2_Macronix, 1 };
+static const RegisterData kSecReg_Macronix = { "Security Register", 8, kBits_SecReg_Macronix, 6 };
+
+static const SpiCmdData kCmds_Macronix[] = {
+    { 0x01, CM_1, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRSR", "Write SR", nullptr, nullptr },                  { &kSR1_Macronix, &kCR1_Macronix, &kCR2_Macronix, nullptr } },
+    { 0x05, CM_1, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDSR", "Read SR1", nullptr, nullptr },                  { &kSR1_Macronix, nullptr, nullptr, nullptr }               },
+    { 0x15, CM_1, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDCR", "Read CR", nullptr, nullptr },                   { &kCR1_Macronix, &kCR2_Macronix, nullptr, nullptr }        },
+    { 0xB0, CM_1, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "SUSP", "Erase/Program Suspend", nullptr, nullptr },     { nullptr, nullptr, nullptr, nullptr }                      },
+    { 0x30, CM_1, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "RESM", "Erase/Program Resume", nullptr, nullptr },      { nullptr, nullptr, nullptr, nullptr }                      },
+    { 0xC0, CM_1, OP_DATA_WRITE, 0,           0, 0, 0, 0, false, false, false, { "SBL", "Set Burst Length", nullptr, nullptr },           { nullptr, nullptr, nullptr, nullptr }                      },
+    { 0xB1, CM_1, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "ENSO", "Enter Secured OTP", nullptr, nullptr },         { nullptr, nullptr, nullptr, nullptr }                      },
+    { 0xC1, CM_1, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "EXSO", "Exit Secured OTP", nullptr, nullptr },          { nullptr, nullptr, nullptr, nullptr }                      },
+    { 0x2B, CM_1, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDSCUR", "Read Security Register", nullptr, nullptr },  { &kSecReg_Macronix, nullptr, nullptr, nullptr }            },
+    { 0x2F, CM_1, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRSCUR", "Write Security Register", nullptr, nullptr }, { &kSecReg_Macronix, nullptr, nullptr, nullptr }            },
+    { 0xAB, CM_1, OP_DATA_READ,  0,           0, 0, 0, 3, true,  false, false, { "RES", "Read Electronic ID", nullptr, nullptr },         { nullptr, nullptr, nullptr, nullptr }                      },
+    { 0x32, CM_1, OP_DATA_WRITE, kAddrGlobal, 0, 4, 0, 0, false, false, false, { "QPP", "Quad Input Page Program", nullptr, nullptr },    { nullptr, nullptr, nullptr, nullptr }                      },
+    { 0x38, CM_1, OP_DATA_WRITE, kAddrGlobal, 4, 0, 0, 0, false, false, false, { "4PP", "Quad I/O Page Program", nullptr, nullptr },      { nullptr, nullptr, nullptr, nullptr }                      },
+};
+
+// ===========================================================================
+// GIGADEVICE (id = 0xC8, parent = 0xEF)
+// No commands of its own; all commands are inherited from Winbond.
+// ===========================================================================
+
+// (no GigaDevice-specific commands)
+
+// ===========================================================================
+// ADESTO (id = 0x1F -- duplicate of Renesas; unreachable via GetCommandSet()
+// which returns the first match, preserving original behaviour)
+// ===========================================================================
+
+static const SpiCmdData kCmds_Adesto[] = {
+    { 0xB1, CM_14, OP_NO_DATA,    0,           0, 0, 0,    0, false, false, false, { "ENSO", "Enter Secured OTP", nullptr, nullptr },                     { nullptr, nullptr, nullptr, nullptr } },
+    { 0xC1, CM_14, OP_NO_DATA,    0,           0, 0, 0,    0, false, false, false, { "EXSO", "Exit Secured OTP", nullptr, nullptr },                      { nullptr, nullptr, nullptr, nullptr } },
+    { 0x2B, CM_14, OP_NO_DATA,    0,           0, 0, 0,    0, false, false, false, { "RDSCUR", "Read Security Register", nullptr, nullptr },              { nullptr, nullptr, nullptr, nullptr } },
+    { 0x2F, CM_14, OP_NO_DATA,    0,           0, 0, 0,    0, false, false, false, { "WRSCUR", "Write Security Register", nullptr, nullptr },             { nullptr, nullptr, nullptr, nullptr } },
+    { 0x38, CM_1,  OP_NO_DATA,    0,           0, 0, CM_4, 0, false, false, false, { "QPIEN", "Enter QPI Mode", nullptr, nullptr },                       { nullptr, nullptr, nullptr, nullptr } },
+    { 0xFF, CM_4,  OP_NO_DATA,    0,           0, 0, CM_1, 0, false, false, false, { "QPIDI", "Exit QPI Mode", nullptr, nullptr },                        { nullptr, nullptr, nullptr, nullptr } },
+    { 0x0C, CM_4,  OP_DATA_READ,  kAddrGlobal, 0, 0, 0,    1, true,  false, true,  { "BRW", "Burst Read with Wrap", nullptr, nullptr },                   { nullptr, nullptr, nullptr, nullptr } },
+    { 0xC0, CM_4,  OP_DATA_WRITE, 0,           0, 0, 0,    0, false, false, false, { "SRP", "Set Read Parameters", nullptr, nullptr },                    { nullptr, nullptr, nullptr, nullptr } },
+    { 0x33, CM_14, OP_DATA_WRITE, kAddrGlobal, 0, 4, 0,    0, false, false, false, { "QPP", "Quad Input Page Program", nullptr, nullptr },                { nullptr, nullptr, nullptr, nullptr } },
+    { 0x94, CM_1,  OP_DATA_READ,  kAddrGlobal, 4, 0, 0,    3, true,  false, false, { "MFID", "Read Manufacturer, Device ID QUAD I/O", nullptr, nullptr }, { nullptr, nullptr, nullptr, nullptr } },
+    { 0xE7, CM_14, OP_DATA_READ,  kAddrGlobal, 4, 0, 0,    1, true,  false, true,  { "W4RD", "Word Read Quad I/O", nullptr, nullptr },                    { nullptr, nullptr, nullptr, nullptr } },
+    { 0x77, CM_1,  OP_DATA_WRITE, 0,           4, 0, 0,    3, true,  false, false, { "SBW",  "Set Burst with Wrap", nullptr, nullptr },                   { nullptr, nullptr, nullptr, nullptr } },
+};
+
+// ===========================================================================
+// CYPRESS (id = 0x01, parent = 0)
+// ===========================================================================
+
+static const BitField kBits_SR1_Cypress[] = {
+    { "SRP0", 7, 7 },
+    { "TPB",  6, 6 },
+    { "TP",   5, 5 },
+    { "BPB",  4, 2 },
+    { "WEL",  1, 1 },
+    { "BUSY", 0, 0 }
+};
+static const BitField kBits_SR2_Cypress[] = {
+    { "SUS",  7, 7 },
+    { "CMP",  6, 6 },
+    { "LB",   5, 3 },
+    { "QE",   1, 1 },
+    { "SRP1", 0, 0 }
+};
+static const BitField kBits_SR3_Cypress[] = {
+    { "RFU",  7, 7 },
+    { "W6:5", 6, 5 },
+    { "W4",   4, 4 },
+    { "LC",   3, 0 }
+};
+static const RegisterData kSR1_Cypress = { "SR1", 8, kBits_SR1_Cypress, 6 };
+static const RegisterData kSR2_Cypress = { "SR2", 8, kBits_SR2_Cypress, 5 };
+static const RegisterData kSR3_Cypress = { "SR3", 8, kBits_SR3_Cypress, 4 };
+
+static const SpiCmdData kCmds_Cypress[] = {
+    { 0x05, CM_1, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDSR", "Read SR1", nullptr, nullptr },                        { &kSR1_Cypress, nullptr, nullptr, nullptr }             },
+    { 0x50, CM_1, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "WRENVSR", "Write Enable for Volatile SR", nullptr, nullptr }, { nullptr, nullptr, nullptr, nullptr }                   },
+    { 0x01, CM_1, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRSR", "Write SRs", nullptr, nullptr },                       { &kSR1_Cypress, &kSR2_Cypress, &kSR3_Cypress, nullptr } },
+    { 0x07, CM_1, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDSR2", "Read SR2", nullptr, nullptr },                       { &kSR2_Cypress, nullptr, nullptr, nullptr }             },
+    { 0x35, CM_1, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDCR", "Read CR", nullptr, nullptr },                         { &kSR2_Cypress, nullptr, nullptr, nullptr }             },
+    { 0x33, CM_1, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDSR3", "Read SR3", nullptr, nullptr },                       { &kSR3_Cypress, nullptr, nullptr, nullptr }             },
+    { 0xB9, CM_1, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "BRAC", "Bank Register Access", nullptr, nullptr },            { nullptr, nullptr, nullptr, nullptr }                   },
+    { 0x17, CM_1, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "BRWR", "Bank Register Write", nullptr, nullptr },             { nullptr, nullptr, nullptr, nullptr }                   },
+    { 0x18, CM_1, OP_DATA_READ,  kAddrGlobal, 0, 0, 0, 1, true,  false, false, { "ECCRD", "ECC SR Read", nullptr, nullptr },                    { nullptr, nullptr, nullptr, nullptr }                   },
+    { 0x14, CM_1, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "ABRD", "Auto Boot Register Read", nullptr, nullptr },         { nullptr, nullptr, nullptr, nullptr }                   },
+    { 0x43, CM_1, OP_DATA_WRITE, 0,           0, 0, 0, 0, false, false, false, { "PNVDLR", "Program NVDLR", nullptr, nullptr },                 { nullptr, nullptr, nullptr, nullptr }                   },
+    { 0x4A, CM_1, OP_DATA_WRITE, 0,           0, 0, 0, 0, false, false, false, { "WVDLR", "Write VDLR", nullptr, nullptr },                     { nullptr, nullptr, nullptr, nullptr }                   },
+    { 0x41, CM_1, OP_DATA_READ,  0,           0, 0, 0, 0, false, false, false, { "DLPRD", "Data Learning Pattern Read", nullptr, nullptr },     { nullptr, nullptr, nullptr, nullptr }                   },
+    { 0x30, CM_1, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "CLSR", "Clear SR", nullptr, nullptr },                        { nullptr, nullptr, nullptr, nullptr }                   },
+    { 0x77, CM_1, OP_DATA_WRITE, 0,           4, 0, 0, 3, true,  false, false, { "SBW", "Set Burst with Wrap", nullptr, nullptr },              { nullptr, nullptr, nullptr, nullptr }                   },
+    { 0x39, CM_1, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "SBP", "Set Block/Pointer Protection", nullptr, nullptr },     { nullptr, nullptr, nullptr, nullptr }                   },
+    { 0x48, CM_1, OP_DATA_READ,  kAddrGlobal, 0, 0, 0, 1, true,  false, false, { "RDSECR", "Read Security Registers", nullptr, nullptr },       { nullptr, nullptr, nullptr, nullptr }                   },
+    { 0x44, CM_1, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "ERSECR", "Erase Security Registers", nullptr, nullptr },      { nullptr, nullptr, nullptr, nullptr }                   },
+    { 0x42, CM_1, OP_DATA_WRITE, kAddrGlobal, 0, 0, 0, 0, false, false, false, { "PRSECR", "Program Security Registers", nullptr, nullptr },    { nullptr, nullptr, nullptr, nullptr }                   },
+};
+
+// ===========================================================================
+// ISSI (id = 0x9D, parent = 0xEF)
+// ===========================================================================
+
+static const BitField kBits_FuncReg_Issi[] = {
+    { "IRL3", 7, 7 },
+    { "IRL2", 6, 6 },
+    { "IRL1", 5, 5 },
+    { "IRL0", 4, 2 },
+    { "ESUS", 3, 3 },
+    { "PSUS", 2, 2 }
+};
+static const RegisterData kFuncReg_Issi = { "Function Register", 8, kBits_FuncReg_Issi, 6 };
+
+static const SpiCmdData kCmds_Issi[] = {
+    { 0x48, CM_1,  OP_REG_READ,   0,           0, 0, 0,    0, false, false, false, { "RDFR", "Read Function Register", nullptr, nullptr },   { &kFuncReg_Issi, nullptr, nullptr, nullptr } },
+    { 0x42, CM_1,  OP_REG_WRITE,  0,           0, 0, 0,    0, false, false, false, { "WRFR", "Write Function Register", nullptr, nullptr },  { &kFuncReg_Issi, nullptr, nullptr, nullptr } },
+    { 0x68, CM_14, OP_DATA_READ,  kAddrGlobal, 0, 0, 0,    1, true,  false, false, { "IRRD", "Read Information Row", nullptr, nullptr },     { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x62, CM_14, OP_DATA_WRITE, kAddrGlobal, 0, 0, 0,    0, false, false, false, { "IRP", "Information Row Program", nullptr, nullptr },   { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x64, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0,    0, false, false, false, { "IRER", "Erase Information Row", nullptr, nullptr },    { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x26, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0,    0, false, false, false, { "SECUNLock", "Sector Unlock", nullptr, nullptr },       { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x24, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0,    0, false, false, false, { "SECLock", "Sector Lock", nullptr, nullptr },           { nullptr, nullptr, nullptr, nullptr }        },
+    { 0xD7, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0,    0, false, false, false, { "SE", "SER", "Sector Erase", nullptr },                 { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x38, CM_1,  OP_DATA_WRITE, kAddrGlobal, 0, 4, 0,    0, false, false, false, { "QPP", "Quad Input Page Program", nullptr, nullptr },   { nullptr, nullptr, nullptr, nullptr }        },
+    { 0xB0, CM_1,  OP_NO_DATA,    0,           0, 0, 0,    0, false, false, false, { "SUSP", "Erase/Program Suspend", nullptr, nullptr },    { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x30, CM_1,  OP_NO_DATA,    0,           0, 0, 0,    0, false, false, false, { "RESM", "Erase/Program Resume", nullptr, nullptr },     { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x35, CM_1,  OP_NO_DATA,    0,           0, 0, CM_4, 0, false, false, false, { "QPIEN", "Enter QPI Mode", nullptr, nullptr },          { nullptr, nullptr, nullptr, nullptr }        },
+    { 0xF5, CM_4,  OP_NO_DATA,    0,           0, 0, CM_1, 0, false, false, false, { "QPIDI", "Exit QPI Mode", nullptr, nullptr },           { nullptr, nullptr, nullptr, nullptr }        },
+};
+
+// ===========================================================================
+// MICRON (id = 0x20, parent = 0)
+// ===========================================================================
+
+static const BitField kBits_NVCR_Micron[] = {
+    { "DCC",        15, 12 },
+    { "XIPMODE",    11, 9  },
+    { "ODS",        8,  6  },
+    { "Reset/Hold", 4,  4  },
+    { "QUAD",       3,  3  },
+    { "DUAL",       2,  2  }
+};
+static const BitField kBits_VCR_Micron[] = {
+    { "DCC",  7, 4 },
+    { "XIP",  3, 3 },
+    { "Wrap", 1, 0 }
+};
+static const BitField kBits_EVCR_Micron[] = {
+    { "QUAD",       7, 7 },
+    { "DUAL",       6, 6 },
+    { "Reset/Hold", 4, 4 },
+    { "VPPACC",     3, 3 },
+    { "ODS",        2, 0 }
+};
+static const BitField kBits_FlagSR_Micron[] = {
+    { "RDY",             7, 7 },
+    { "Erase suspend",   6, 6 },
+    { "Erase fail",      5, 5 },
+    { "Program fail",    4, 4 },
+    { "VPP fail",        3, 3 },
+    { "Program suspend", 2, 2 },
+    { "Protection fail", 1, 1 }
+};
+static const BitField kBits_LockReg_Micron[] = {
+    { "SLD", 1, 1 },
+    { "SWL", 0, 0 }
+};
+static const RegisterData kNVCR_Micron    = { "Non-Volatile CR", 16, kBits_NVCR_Micron, 6 };
+static const RegisterData kVCR_Micron     = { "Volatile CR", 8, kBits_VCR_Micron, 3 };
+static const RegisterData kEVCR_Micron    = { "Enhanced Volatile CR", 8, kBits_EVCR_Micron, 5 };
+static const RegisterData kFlagSR_Micron  = { "Flag SR", 8, kBits_FlagSR_Micron, 7 };
+static const RegisterData kLockReg_Micron = { "Lock Register", 8, kBits_LockReg_Micron, 2 };
+
+static const SpiCmdData kCmds_Micron[] = {
+    { 0xAF, CM_24,  OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "MRID", "Multiple I/O Read ID", nullptr, nullptr },           { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x5A, CM_124, OP_DATA_READ,  kAddrGlobal, 0, 0, 0, 1, true,  false, false, { "SFDP", "Read SFDP Register", nullptr, nullptr },              { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x0B, CM_124, OP_DATA_READ,  kAddrGlobal, 0, 0, 0, 1, true,  false, false, { "FRD", "Fast Read", nullptr, nullptr },                        { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x3B, CM_12,  OP_DATA_READ,  kAddrGlobal, 0, 2, 0, 1, true,  false, false, { "DRD",  "Fast Read Dual Output", nullptr, nullptr },            { nullptr, nullptr, nullptr, nullptr }          },
+    { 0xBB, CM_12,  OP_DATA_READ,  kAddrGlobal, 2, 0, 0, 1, true,  false, true,  { "DRIO", "Fast Read Dual I/O", nullptr, nullptr },              { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x6B, CM_14,  OP_DATA_READ,  kAddrGlobal, 0, 4, 0, 1, true,  false, false, { "QRD",  "Fast Read Quad Output", nullptr, nullptr },            { nullptr, nullptr, nullptr, nullptr }          },
+    { 0xEB, CM_14,  OP_DATA_READ,  kAddrGlobal, 4, 0, 0, 2, true,  false, true,  { "QRIO", "Fast Read Quad I/O", nullptr, nullptr },              { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x06, CM_124, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "WREN", "Write Enable", nullptr, nullptr },                    { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x04, CM_124, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "WRDI", "Write Disable", nullptr, nullptr },                   { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x05, CM_124, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDSR", "Read SR", nullptr, nullptr },                         { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x01, CM_124, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRSR", "Write SR", nullptr, nullptr },                        { nullptr, nullptr, nullptr, nullptr }          },
+    { 0xE8, CM_124, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDLR", "Read Lock Register", nullptr, nullptr },              { &kLockReg_Micron, nullptr, nullptr, nullptr } },
+    { 0xE5, CM_124, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRLR", "Write Lock Register", nullptr, nullptr },             { &kLockReg_Micron, nullptr, nullptr, nullptr } },
+    { 0x70, CM_124, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDFSR", "Read Flag SR", nullptr, nullptr },                   { &kFlagSR_Micron, nullptr, nullptr, nullptr }  },
+    { 0x50, CM_124, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRFSR", "Write Flag SR", nullptr, nullptr },                  { &kFlagSR_Micron, nullptr, nullptr, nullptr }  },
+    { 0xB5, CM_124, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDNVCR", "Read Non-Volatile CR", nullptr, nullptr },          { &kNVCR_Micron, nullptr, nullptr, nullptr }    },
+    { 0xB1, CM_124, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRNVCR", "Write Non-Volatile CR", nullptr, nullptr },         { &kNVCR_Micron, nullptr, nullptr, nullptr }    },
+    { 0x85, CM_124, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDVCR", "Read Volatile CR", nullptr, nullptr },               { &kVCR_Micron, nullptr, nullptr, nullptr }     },
+    { 0x81, CM_124, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRVCR", "Write Volatile CR", nullptr, nullptr },              { &kVCR_Micron, nullptr, nullptr, nullptr }     },
+    { 0x85, CM_124, OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDEVCR", "Read Enhanced Volatile CR", nullptr, nullptr },     { &kEVCR_Micron, nullptr, nullptr, nullptr }    },
+    { 0x81, CM_124, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WREVCR", "Write Enhanced Volatile CR", nullptr, nullptr },    { &kEVCR_Micron, nullptr, nullptr, nullptr }    },
+    { 0x02, CM_124, OP_DATA_WRITE, kAddrGlobal, 0, 0, 0, 0, false, false, false, { "PP", "Page Program", nullptr, nullptr },                      { nullptr, nullptr, nullptr, nullptr }          },
+    { 0xA2, CM_12,  OP_DATA_WRITE, kAddrGlobal, 0, 2, 0, 0, false, false, false, { "DPP", "Dual Input Fast Program", nullptr, nullptr },          { nullptr, nullptr, nullptr, nullptr }          },
+    { 0xD2, CM_12,  OP_DATA_WRITE, kAddrGlobal, 2, 0, 0, 0, false, false, false, { "DPP", "Extended Dual Input Fast Program", nullptr, nullptr }, { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x32, CM_14,  OP_DATA_WRITE, kAddrGlobal, 0, 2, 0, 0, false, false, false, { "QPP", "Quad Input Fast program", nullptr, nullptr },          { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x12, CM_14,  OP_DATA_WRITE, kAddrGlobal, 2, 0, 0, 0, false, false, false, { "QPP", "Extended Quad Input Fast Program", nullptr, nullptr }, { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x20, CM_124, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "SSE", "Subsector Erase", nullptr, nullptr },                  { nullptr, nullptr, nullptr, nullptr }          },
+    { 0xD8, CM_124, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "SE", "Sector Erase", nullptr, nullptr },                      { nullptr, nullptr, nullptr, nullptr }          },
+    { 0xC7, CM_124, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "BE", "Bulk Erase", nullptr, nullptr },                        { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x75, CM_124, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "SUSP", "Erase/Program Suspend", nullptr, nullptr },           { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x7A, CM_124, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "RESM", "Erase/Program Resume", nullptr, nullptr },            { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x75, CM_124, OP_DATA_READ,  0,           0, 0, 0, 0, false, false, false, { "ROTP", "Read OTP Array", nullptr, nullptr },                  { nullptr, nullptr, nullptr, nullptr }          },
+    { 0x7A, CM_124, OP_DATA_WRITE, 0,           0, 0, 0, 0, false, false, false, { "POTP", "Program OTP Array", nullptr, nullptr },               { nullptr, nullptr, nullptr, nullptr }          },
+};
+
+// ===========================================================================
+// MICROCHIP (id = 0xBF, parent = 0xEF)
+// ===========================================================================
+
+static const BitField kBits_SR_Microchip[] = {
+    { "BUSY", 7, 7 },
+    { "SEC",  5, 5 },
+    { "WPLD", 4, 4 },
+    { "WSP",  3, 3 },
+    { "WSE",  2, 2 },
+    { "WEL",  1, 1 },
+    { "BUSY", 0, 0 }
+};
+static const BitField kBits_CR_Microchip[] = {
+    { "WPEN", 7, 7 },
+    { "BPNV", 3, 3 },
+    { "IOC",  1, 1 }
+};
+static const RegisterData kSR_Microchip = { "SR", 8, kBits_SR_Microchip, 7 };
+static const RegisterData kCR_Microchip = { "CR", 8, kBits_CR_Microchip, 3 };
+
+static const SpiCmdData kCmds_Microchip[] = {
+    { 0x05, CM_1,  OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDSR", "Read SR", nullptr, nullptr },                                 { &kSR_Microchip, nullptr, nullptr, nullptr } },
+    { 0x05, CM_4,  OP_REG_READ,   0,           0, 0, 0, 1, true,  false, false, { "RDSR", "Read SR", nullptr, nullptr },                                 { &kSR_Microchip, nullptr, nullptr, nullptr } },
+    { 0x35, CM_1,  OP_REG_READ,   0,           0, 0, 0, 0, false, false, false, { "RDCR", "Read CR", nullptr, nullptr },                                 { &kCR_Microchip, nullptr, nullptr, nullptr } },
+    { 0x35, CM_4,  OP_REG_READ,   0,           0, 0, 0, 1, true,  false, false, { "RDCR", "Read CR", nullptr, nullptr },                                 { &kCR_Microchip, nullptr, nullptr, nullptr } },
+    { 0x0B, CM_4,  OP_DATA_READ,  kAddrGlobal, 0, 0, 0, 3, true,  false, false, { "FRD", "Fast Read", nullptr, nullptr },                                { nullptr, nullptr, nullptr, nullptr }        },
+    { 0xEB, CM_1,  OP_DATA_READ,  kAddrGlobal, 4, 0, 0, 3, true,  false, true,  { "QRIO", "Fast Read Quad I/O", nullptr, nullptr },                      { nullptr, nullptr, nullptr, nullptr }        },
+    { 0xC0, CM_14, OP_DATA_WRITE, 0,           0, 0, 0, 0, false, false, false, { "SB", "Set Burst Length", nullptr, nullptr },                          { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x0C, CM_4,  OP_DATA_READ,  kAddrGlobal, 0, 0, 0, 3, true,  false, true,  { "RBSQI", "Burst Read with Wrap", nullptr, nullptr },                   { nullptr, nullptr, nullptr, nullptr }        },
+    { 0xEC, CM_1,  OP_DATA_READ,  kAddrGlobal, 0, 0, 0, 3, true,  false, true,  { "RBSPI", "Burst Read with Wrap", nullptr, nullptr },                   { nullptr, nullptr, nullptr, nullptr }        },
+    { 0xB0, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "SUSP", "Erase/Program Suspend", nullptr, nullptr },                   { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x30, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "RESM", "Erase/Program Resume", nullptr, nullptr },                    { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x72, CM_1,  OP_DATA_READ,  0,           0, 0, 0, 0, false, false, false, { "RBPR", "Read Block Protection Register", nullptr, nullptr },          { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x72, CM_4,  OP_DATA_READ,  0,           0, 0, 0, 1, true,  false, false, { "RBPR", "Read Block Protection Register", nullptr, nullptr },          { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x8D, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "LBPR", "Lock Down Block Protection Register", nullptr, nullptr },     { nullptr, nullptr, nullptr, nullptr }        },
+    { 0xE8, CM_14, OP_DATA_WRITE, 0,           0, 0, 0, 0, false, false, false, { "nVWLDR", "Non-Volatile Write Lock Down Register", nullptr, nullptr }, { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x98, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "ULBPR", "Global Block Protection Unlock", nullptr, nullptr },         { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x88, CM_1,  OP_DATA_READ,  kAddr16,     0, 0, 0, 1, true,  false, false, { "RSID", "Read Security ID", nullptr, nullptr },                        { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x88, CM_4,  OP_DATA_READ,  kAddr16,     0, 0, 0, 3, true,  false, false, { "RSID", "Read Security ID", nullptr, nullptr },                        { nullptr, nullptr, nullptr, nullptr }        },
+    { 0xA5, CM_14, OP_DATA_WRITE, kAddr16,     0, 0, 0, 0, false, false, false, { "PSID", "Program User Security ID Area", nullptr, nullptr },           { nullptr, nullptr, nullptr, nullptr }        },
+    { 0x85, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "LSID", "Lockout Security ID Programming", nullptr, nullptr },         { nullptr, nullptr, nullptr, nullptr }        },
+};
+
+// ===========================================================================
+// FUJITSU FRAM (id = 0x04, parent = 0)
+// No device-specific commands; all commands are inherited from Common.
+// ===========================================================================
+
+// (no Fujitsu-specific commands)
+
+// ===========================================================================
+// Master command-set table
+// ===========================================================================
+
+static const CmdSet kCmdSets[] = {
+    // { id,    name,          parentId,  cmds,             cmdCount }
+    { 0x00, "Unspecified", -1,   kCmds_Common,    static_cast<uint16_t>(std::size(kCmds_Common))    },
+    { 0x1F, "Renesas",     0,    kCmds_Renesas,   static_cast<uint16_t>(std::size(kCmds_Renesas))   },
+    { 0xEF, "Winbond",     0,    kCmds_Winbond,   static_cast<uint16_t>(std::size(kCmds_Winbond))   },
+    { 0xC2, "Macronix",    0,    kCmds_Macronix,  static_cast<uint16_t>(std::size(kCmds_Macronix))  },
+    { 0xC8, "GigaDevice",  0xEF, nullptr,         0                                                 },
+    { 0x1F, "Adesto",      0,    kCmds_Adesto,    static_cast<uint16_t>(std::size(kCmds_Adesto))    },
+    { 0x01, "Cypress",     0,    kCmds_Cypress,   static_cast<uint16_t>(std::size(kCmds_Cypress))   },
+    { 0x9D, "Issi",        0xEF, kCmds_Issi,      static_cast<uint16_t>(std::size(kCmds_Issi))      },
+    { 0x20, "Micron",      0,    kCmds_Micron,    static_cast<uint16_t>(std::size(kCmds_Micron))    },
+    { 0xBF, "Microchip",   0xEF, kCmds_Microchip, static_cast<uint16_t>(std::size(kCmds_Microchip)) },
+    { 0x04, "Fujitsu",     0,    nullptr,         0                                                 },
+};
+static constexpr size_t kCmdSetCount = std::size(kCmdSets);
+
+// ---------------------------------------------------------------------------
+// Internal helper: look up a CmdSet entry by id (returns first match).
+// ---------------------------------------------------------------------------
+static const CmdSet* FindCmdSetById(int id)
 {
-	// Bits for all the lines at once 0 - CS, 1 - CLK, 2-5 data bits
-	U8 lines = 0;
-	int n;
-	// Mask for extracting bits x    1b    2b  x    4b
-	static const U8 mask[5] = { 0, 0x80, 0xC0, 0, 0xF0 };
-	// row 0 for output, row 1 for input
-	// CS is on bit 0
-	// CLK on bit 1
-	// Data line are on bits 2-5 hence shifts
-	static const U8 shif[2][5] = { { 0, 5, 4, 0, 2 }, {0, 4, 4, 0, 2} };
-
-	for (int i = 0; i < 8; )
-	{
-		n = 0;
-		// Extract as many bits as bus mode wants, they will be left aligned
-		lines = b & mask[mCurBusMode];
-		// shift right to bits 2-5 (for quad), 2-3 (for dual), o 2 or 3 for single mode
-		lines >>= shif[mDataIn][mCurBusMode];
-
-		b <<= mCurBusMode;
-		i += mCurBusMode;
-		// Add lines to history, CS is low all the time
-		bits.push_back(CS_LOW | lines | CLOCK_LOW);
-		// Add same lines with clock high
-		bits.push_back(CS_LOW | lines | CLOCK_HIGH);
-	}
+    if (id < 0)
+    {
+        return nullptr;
+    }
+    for (size_t i = 0; i < kCmdSetCount; ++i)
+    {
+        if (kCmdSets[i].mId == id)
+        {
+            return &kCmdSets[i];
+        }
+    }
+    return nullptr;
 }
 
-void SpiFlash::GenerateCommandBits(SpiCmdData *cmd, std::vector<U8> &bits)
+// ---------------------------------------------------------------------------
+// CmdSet method implementations
+// ---------------------------------------------------------------------------
+
+const SpiCmdData* CmdSet::FindCommand(BusMode mode, uint8_t code) const
 {
-	int n;
-	mDataIn = false;
-	// Add some delay before CS goes low
-	bits.push_back(Delay(3 + rand() % 10));
+    for (uint16_t i = 0; i < mCmdCount; ++i)
+    {
+        if (mCmds[i].mCode == code && mCmds[i].IsValidForMode(mode))
+        {
+            return &mCmds[i];
+        }
+    }
 
-	// generate cmd bits if mActiveCmd in not set
-	if (mCurrentCmd == nullptr)
-	{
-		GenerateByte(cmd->GetCode(), bits);
-	}
-
-	// if bus witdh changes after command code change current bus mode
-	if (cmd->mModeArgs)
-		mCurBusMode = BusMode(cmd->mModeArgs);
-
-	// generate address
-	if (cmd->mAddressBits)
-	{
-		uint32_t addr = rand();
-		U32 addressBits = (cmd->mAddressBits != 0xFF) ? cmd->mAddressBits : mAddressBits;
-		if (addressBits > 24)
-			GenerateByte(U8(addr >> 24), bits);
-		if (addressBits > 16)
-			GenerateByte(U8(addr >> 16), bits);
-		if (addressBits > 8)
-			GenerateByte(U8(addr >> 8), bits);
-		GenerateByte(U8(addr), bits);
-	}
-
-	// for continuous read mode command generate M bits
-	if (cmd->mContinuousRead)
-	{
-		// 3/4 times stay in continuous read mode
-		if (rand() % 4)
-		{
-			GenerateByte(0xAF, bits);
-			mCurrentCmd = cmd;
-		}
-		else
-		{
-			// 1/4 times go to command mode again
-			GenerateByte(0xFF, bits);
-			mCurrentCmd = nullptr;
-		}
-	}
-
-	// Add some dummy bytes if needed
-	if (cmd->mDummyBytes)
-	{
-		for (int i = 0; i < cmd->mDummyCount; ++i)
-			GenerateByte(0xFF, bits);
-	}
-	// or maybe some dummy cycles
-	else if (cmd->mDummyCycles)
-	{
-		for (int i = 0; i < cmd->mDummyCount; ++i)
-		{
-			// Add lines to history
-			bits.push_back(CS_LOW | MOSI_HIGH | MISO_HIGH | D2_HIGH | D3_HIGH | CLOCK_LOW);
-			// Add same lines with clock high
-			bits.push_back(CS_LOW | MOSI_HIGH | MISO_HIGH | D2_HIGH | D3_HIGH | CLOCK_HIGH);
-		}
-	}
-
-	// Switch do other bus mode if this is 1-1-2 or 1-1-4 command
-	if (cmd->mModeData)
-		mCurBusMode = BusMode(cmd->mModeData);
-
-	// Generate data for commands that have it
-	mDataIn = (cmd->mCmdOp == OP_REG_READ || cmd->mCmdOp == OP_DATA_READ);
-	switch (cmd->mCmdOp)
-	{
-	case OP_REG_READ:
-	case OP_REG_WRITE:
-		// For register read or write just one or to bytes
-		n = (int)cmd->RegisterCount();
-		break;
-	case OP_DATA_READ:
-	case OP_DATA_WRITE:
-		// For data read or write generate up to 50 bytes
-		n = 1 + rand() % 50;
-		break;
-	default:
-		// Commands does not have any additional data
-		n = 0;
-	}
-
-	// Genereate data
-	for (int i = 0; i < n; ++i)
-		GenerateByte(U8(rand()), bits);
-
-	// If command changed bus mode update it
-	// (comands like Enter/Exit QPI mode)
-	if (cmd->mModeChange)
-		mDefBusMode = BusMode(cmd->mModeChange);
-
-	// Switch to default bus mode
-	mCurBusMode = mDefBusMode;
+    return nullptr;
 }
 
-void SpiFlash::GenerateRandomCommandBits(std::vector<U8> &bits)
+const SpiCmdData* CmdSet::GetCommand(BusMode mode, uint8_t code) const
 {
-	std::vector<U8> cmds;
+    const SpiCmdData* cmd = FindCommand(mode, code);
+    if (cmd)
+    {
+        return cmd;
+    }
 
-	if (mCurrentCmd)
-		GenerateCommandBits(mCurrentCmd, bits);
-	else
-	{
-		GetValidCommands(cmds);
-		SpiCmdData *cmd = mActiveCmdSet->GetCommand(mCurBusMode, cmds[rand() % cmds.size()]);
-		if (cmd)
-			GenerateCommandBits(cmd, bits);
-	}
+    const CmdSet* parent = FindCmdSetById(mParentId);
+    return parent ? parent->GetCommand(mode, code) : nullptr;
 }
 
-void addCommands(SpiFlash &spiFlash)
+void CmdSet::GetValidCommands(BusMode mode, std::vector<uint8_t>& cmds) const
 {
-	spiFlash
-		+ CommandSet(0, "not set")
-		+ Register("Status Register-1", 8) + Bit(7, "SRP0") + Bit(1, "WEL") + Bit(0, "BUSY")
-		+ Register("Status Register-2", 8) + Bit(7, "SUS") + Bit(1, "QE") + Bit(0, "SRP1")
+    // Collect from parent chain first, then add child entries not already present
+    const CmdSet* parent = FindCmdSetById(mParentId);
+    if (parent)
+    {
+        parent->GetValidCommands(mode, cmds);
+    }
 
-		+ Cmd14(0x06, "WREN", "Write Enable")
-		+ Cmd14(0x04, "WRDI", "Write Disable")
-		+ Cmd14(0x05, "RDSR", "Read status register-1") + RegisterRead("Status Register-1")
-		+ Cmd14(0x35, "RS2", "Read status register-2") + RegisterWrite("Status Register-2")
-		+ Cmd14(0x01, "WS1", "Write status register-1") + RegisterWrite("Status Register-1") + RegisterWrite("Status Register-2") +
-		+ Cmd14(0x31, "WS2", "Write status register-2") + RegisterWrite("Status Register-2")
-		+ Cmd1(0x03, "R", "Read Data") + ADDR + OP_DATA_READ
-		+ Cmd1(0x0B, "R", "Fast Read") + ADDR + DummyBytes(1) + OP_DATA_READ
-		+ Cmd1(0x3B, "R", "R 1-1-2", "Fast Read Dual Ouput") + ADDR + DummyBytes(1) + DUAL_DATA + OP_DATA_READ
-		+ Cmd1(0x6B, "R", "R 1-1-4", "Fast Read Quad Output") + ADDR + DummyBytes(1) + QUAD_DATA + OP_DATA_READ
-		+ Cmd1(0xBB, "R", "R 1-2-2", "Fast Read Dual I/O") + DUAL_IO + ADDR + M + OP_DATA_READ
-		+ Cmd1(0xEB, "R", "R 1-4-4", "Fast Read Quad I/O") + QUAD_IO + ADDR + M + DummyBytes(2) + OP_DATA_READ
-		+ Cmd14(0x02, "PP", "Page Program") + ADDR + OP_DATA_WRITE
-		+ Cmd14(0x20, "SE", "Sector erase") + ADDR
-		+ Cmd14(0x52, "BE", "Block erase") + ADDR
-		+ Cmd14(0xD8, "BE", "BE64", "64KB Block erase") + ADDR
-		+ Cmd14(0x60, "CE", "Chip erase")
-		+ Cmd14(0xC7, "CE", "Chip erase")
-		+ Cmd1(0x5A, "SFDP", "Read SFDP Register") + ADDR + DummyBytes(1) + OP_DATA_READ
-		+ Cmd14(0x75, "SUSP", "Erase/Program Suspend")
-		+ Cmd14(0x7A, "RESM", "Erase/Program Resume")
-		+ Cmd14(0xB9, "DN", "Power Down")
-		+ Cmd14(0x9F, "JID", "Read JEDEC ID") + OP_DATA_READ
-		+ Cmd1(0x90, "MFID", "Read manufacturer, Device ID") + ADDR + OP_DATA_READ
-		+ Cmd14(0x66, "RSTEN", "Enable Reset")
-		+ Cmd14(0x99, "RST", "Reset")
-		+ Cmd14(0xAB, "UP", "Release Power Down") + DummyBytes(3) + OP_DATA_READ
-		+ CommandSet(0xEF, "Winbond", 0)
-		+ Register("Status Register-1", 8) + Bit(7, "SRP0") + Bit(6, "TPB") + Bit(5, "TP") + Bit(4, 2, "BPB") + Bit(1, "WEL") + Bit(0, "BUSY")
-		+ Register("Status Register-2", 8) + Bit(7, "SUS") + Bit(6, "CMP") + Bit(5, 3, "LB") + Bit(1, "QE") + Bit(0, "SRP1")
-		+ Register("Status Register-3", 8) + Bit(7, "HOLD/RESET") + Bit(6, 5, "DRV") + Bit(2, "WPS")
+    for (uint16_t i = 0; i < mCmdCount; ++i)
+    {
+        if (!mCmds[i].IsValidForMode(mode))
+        {
+            continue;
+        }
 
-		+ Cmd14(0x50, "WRENVSR", "Write Enable for Volatile Status Register")
-		+ Cmd14(0x35, "RS2", "Read status register-2") + RegisterRead("Status Register-2")
-		+ Cmd14(0x15, "RS3", "Read status register-3") + RegisterRead("Status Register-3")
-		+ Cmd14(0x01, "WS1", "Write status register-1") + RegisterWrite("Status Register-1") + RegisterWrite("Status Register-2")
-		+ Cmd14(0x31, "WS2", "Write status register-2") + RegisterWrite("Status Register-2")
-		+ Cmd14(0x11, "WS3", "Write status register-3") + RegisterWrite("Status Register-3")
-		+ Cmd4(0xEB, "R", "R 1-4-4", "Fast Read Quad I/O") + QUAD_IO + ADDR + M + OP_DATA_READ
-		+ Cmd14(0xE7, "R", "R 1-4-4", "Word Read Quad I/O") + QUAD_IO + ADDR + M + DummyBytes(1) + OP_DATA_READ
-		+ Cmd14(0xE3, "R", "R 1-4-4", "Octal Word Read Quad I/O") + QUAD_IO + ADDR + M + OP_DATA_READ
-		+ Cmd14(0x36, "Individual Block/Sector Lock") + ADDR
-		+ Cmd14(0x39, "Individual Block/Sector Unlock") + ADDR
-		+ Cmd14(0x3D, "Read Block/Sector Lock") + ADDR
-		+ Cmd14(0x7E, "Global Block/Sector Lock")
-		+ Cmd14(0x98, "Global Block/Sector Unlock")
+        uint8_t c  = mCmds[i].mCode;
+        bool found = false;
 
-		+ Cmd1(0x77, "Set Burst with Wrap") + QUAD_IO + DummyBytes(3) + OP_DATA_WRITE
-		+ Cmd1(0x32, "QPP", "Quad Input Page Program") + QUAD_DATA + ADDR + OP_DATA_WRITE
-		+ Cmd1(0x92, "MFID", "Read manufacturer, Device ID DUAL I/O") + DUAL_IO + ADDR + DummyBytes(1) + OP_DATA_READ
-		+ Cmd1(0x94, "MFID", "Read manufacturer, Device ID QUAD I/O") + QUAD_IO + ADDR + DummyBytes(3) + OP_DATA_READ
-		+ Cmd1(0x4B, "ID", "Read Unique ID number") + DummyBytes(4) + OP_DATA_READ
-		+ Cmd1(0x44, "Erase Security Registers") + ADDR
-		+ Cmd1(0x42, "Program Security Registers") + ADDR + OP_DATA_WRITE
-		+ Cmd1(0x48, "Read Security Registers") + ADDR + DummyBytes(1) + OP_DATA_READ
-		+ Cmd1(0x38, "*4", "QPI", "Enter QPI Mode") + SET_QUAD
+        for (auto x : cmds)
+        {
+            if (x == c)
+            {
+                found = true;
+                break;
+            }
+        }
 
-		+ Cmd4(0x0B, "R", "R 4-4-4", "Fast Read") + ADDR + DummyBytes(1) + OP_DATA_READ
-		+ Cmd4(0xC0, "SRP", "Set Read Parameters") + OP_DATA_WRITE
-		+ Cmd4(0x0C, "BRW", "Burst Read with Wrap") + ADDR + M + DummyBytes(1) + OP_DATA_READ
+        if (!found)
+        {
+            cmds.push_back(c);
+        }
+    }
 
-		+ Cmd14(0xff, "*1", "Exit QPI Mode") + SET_SINGLE
-		+ CommandSet(0xC2, "Macronix", 0)
-		+ Register("Status Register-1", 8) + Bit(7, "SRWD") + Bit(6, "QE") + Bit(5, 2, "BPB") + Bit(1, "WEL") + Bit(0, "WIP")
-		+ Register("Configuration Register-1", 8) + Bit(6, "DC") + Bit(3, "TB")
-		+ Register("Configuration Register-2", 8) + Bit(1, "L/H")
-		+ Register("Security Register", 8) + Bit(6, "E_FAIL") + Bit(5, "P_FAIL") + Bit(3, "ESB") + Bit(2, "PSB") + Bit(1, "LDSO") + Bit(0, "SOTP")
-		+ Cmd1(0x01, "WSRS", "Write status register") + RegisterWrite("Status Register-1") + RegisterWrite("Configuration Register-1") + RegisterWrite("Configuration Register-2")
-		+ Cmd1(0x05, "RDSR", "Read status register-1") + RegisterRead("Status Register-1")
-		+ Cmd1(0x15, "RDCR", "Read configuration register") + RegisterRead("Configuration Register-1") + RegisterRead("Configuration Register-2")
-		+ Cmd1(0xB0, "SUSP", "Erase/Program Suspend")
-		+ Cmd1(0x30, "RESM", "Erase/Program Resume")
-		+ Cmd1(0xC0, "SBL", "Set Burst Length") + OP_DATA_WRITE
-		+ Cmd1(0xB1, "ENSO", "Enter Secured OTP")
-		+ Cmd1(0xC1, "EXSO", "Exit Secured OTP")
-		+ Cmd1(0x2B, "RDSCUR", "Read Security Register") + RegisterRead("Security Register")
-		+ Cmd1(0x2F, "WRSCUR", "Write Security Register") + RegisterWrite("Security Register")
-		+ Cmd1(0xAB, "RES", "Read Electronic ID") + DummyBytes(3) + OP_DATA_READ
-		+ Cmd1(0x32, "QPP", "Quad Input Page Program") + QUAD_DATA + ADDR + OP_DATA_WRITE
-		+ Cmd1(0x38, "QPP", "Quad I/O Page Program") + QUAD_IO + ADDR + OP_DATA_WRITE
-
-		+ CommandSet(0xC8, "GigaDevice", 0xEF)
-		+ Register("Status Register-1", 8) + Bit(7, "SRP0") + Bit(6, 2, "BPB") + Bit(1, "WEL") + Bit(0, "BUSY")
-		+ Register("Status Register-2", 8) + Bit(7, "SUS1") + Bit(6, "CMP") + Bit(5, 3, "LB") + Bit(2, "SUS2") + Bit(1, "QE") + Bit(0, "SRP1")
-		+ CommandSet(0x1F, "Adesto", 0)
-		+ Cmd14(0xB1, "ENSO", "Enter Secured OTP")
-		+ Cmd14(0xC1, "EXSO", "Exit Secured OTP")
-		+ Cmd14(0x2B, "RDSCUR", "Read Security Register")
-		+ Cmd14(0x2F, "WRSCUR", "Write Security Register")
-		+ Cmd1(0x38, "*4", "QPI", "Enter QPI Mode") + SET_QUAD
-		+ Cmd4(0xff, "*1", "Exit QPI Mode") + SET_SINGLE
-		+ Cmd4(0x0C, "BRW", "Burst Read with Wrap") + ADDR + M + DummyBytes(1) + OP_DATA_READ
-		+ Cmd4(0xC0, "SRP", "Set Read Parameters") + OP_DATA_WRITE
-		+ Cmd14(0x33, "QPP", "Quad Input Page Program") + QUAD_DATA + ADDR + OP_DATA_WRITE
-		+ Cmd1(0x94, "MFID", "Read manufacturer, Device ID QUAD I/O") + QUAD_IO + ADDR + DummyBytes(3) + OP_DATA_READ
-		+ Cmd14(0xE7, "R", "R 1-4-4", "Word Read Quad I/O") + QUAD_IO + ADDR + M + DummyBytes(1) + OP_DATA_READ
-		+ Cmd1(0x77, "Set Burst with Wrap") + QUAD_IO + DummyBytes(3) + OP_DATA_WRITE
-
-		+ CommandSet(0x01, "Cypress", 0)
-		+ Register("Status Register-1", 8) + Bit(7, "SRP0") + Bit(6, "TPB") + Bit(5, "TP") + Bit(4, 2, "BPB") + Bit(1, "WEL") + Bit(0, "BUSY")
-		+ Register("Status Register-2", 8) + Bit(7, "SUS") + Bit(6, "CMP") + Bit(5, 3, "LB") + Bit(1, "QE") + Bit(0, "SRP1")
-		+ Register("Status Register-3", 8) + Bit(7, "RFU") + Bit(6, 5, "W6:5") + Bit(4, "W4") + Bit(3, 0, "LC")
-		+ Cmd1(0x05, "RDSR1", "Read Status Register-1") + RegisterRead("Status Register-1")
-		+ Cmd1(0x50, "WRENVSR", "Write Enable for Volatile Status Register")
-		+ Cmd1(0x01, "WS1", "Write status registers") + RegisterWrite("Status Register-1") + RegisterWrite("Status Register-2") + RegisterWrite("Status Register-3") +
-		+ Cmd1(0x07, "RDSR2", "Read Status Register-2") + RegisterRead("Status Register-2")
-		+ Cmd1(0x35, "RDCR", "Read Configuration Register") + RegisterWrite("Status Register-2")
-		+ Cmd1(0x33, "RDSR3", "Read Status register-3") + RegisterRead("Status Register-3")
-		+ Cmd1(0x01, "WRR", "Write Status Registers") + RegisterWrite("Status Register-1")
-		+ Cmd1(0xB9, "BRAC", "Bank Register Access")
-		+ Cmd1(0x17, "BRWR", "Bank Register Write")
-		+ Cmd1(0x18, "ECCRD", "ECC Statuc Register Read") + ADDR + DummyBytes(1) + OP_DATA_READ
-		+ Cmd1(0x14, "ABRD", "Auto Boot Register Read")
-		+ Cmd1(0x14, "ABWR", "Auto Boot Register Write")
-		+ Cmd1(0x43, "PNVDLR", "Programm NVDLR") + OP_DATA_WRITE
-		+ Cmd1(0x4A, "WVDLR", "Write VDLR") + OP_DATA_WRITE
-		+ Cmd1(0x41, "DLPRD", "Data Learning Patter Read") + OP_DATA_READ
-		+ Cmd1(0x30, "CLSR", "Clear Status Register")
-		+ Cmd1(0x77, "Set Burst with Wrap") + QUAD_IO + DummyBytes(3) + OP_DATA_WRITE
-		+ Cmd1(0x39, "Set Block/Pointer protection") + ADDR
-		+ Cmd1(0x48, "Read Security Registers") + ADDR + DummyBytes(1) + OP_DATA_READ
-		+ Cmd1(0x44, "Erase Security Registers") + ADDR
-		+ Cmd1(0x42, "Program Security Registers") + ADDR + OP_DATA_WRITE
-
-		+ CommandSet(0x9D, "Issi", 0xEF)
-		+ Register("Function Register", 8) + Bit(7, "IRL3") + Bit(6, "IRL2") + Bit(5, "IRL1") + Bit(4, 2, "IRL0") + Bit(3, "ESUS") + Bit(2, "PSUS")
-		+ Cmd1(0x48, "Read Function Register") + RegisterRead("Function Register")
-		+ Cmd1(0x42, "Write Function Register") + RegisterWrite("Function Register")
-		+ Cmd14(0x68, "IRRD", "Read Information Row") + ADDR + DummyBytes(1) + OP_DATA_READ
-		+ Cmd14(0x62, "IRP", "Information Row Program") + ADDR + OP_DATA_WRITE
-		+ Cmd14(0x64, "IRER", "Erase Information Row") + ADDR
-		+ Cmd14(0x26, "SECUNLOCK", "Sector Unlock") + ADDR
-		+ Cmd14(0x24, "SECLOCK", "Sector Lock") + ADDR
-		+ Cmd14(0xD7, "SE", "SER", "Sector erase") + ADDR
-		/* 0x38 Differes from Winbond */
-		+ Cmd1(0x38, "QPP", "Quad Input Page Program") + QUAD_DATA + ADDR + OP_DATA_WRITE
-		+ Cmd1(0xB0, "SUSP", "Erase/Program Suspend")
-		+ Cmd1(0x30, "RESM", "Erase/Program Resume")
-		+ Cmd1(0x35, "*4", "QPIEN", "Enter QPI Mode") + SET_QUAD
-		+ Cmd4(0xF5, "*1", "QPIDI", "Exit QPI Mode") + SET_SINGLE
-
-		+ CommandSet(0x20, "Micron", 0)
-		+ Register("Nonvolatile Configuration Register", 16) + Bit(15, 12, "DCC") + Bit(11, 9, "XIPMODE") + Bit(8, 6, "ODS") + Bit(4, "Reset/Hold") + Bit(3, "QUAD") + Bit(2, "DUAL")
-		+ Register("Volatile Configuration Register", 8) + Bit(7, 4, "DCC") + Bit(3, "XIP") + Bit(1, 0, "Wrap")
-		+ Register("Enhanced Volatile Configuration Register", 8) + Bit(7, "QUAD") + Bit(6, "DUAL") + Bit(4, "Reset/Hold") + Bit(3, "VPPACC") + Bit(2, 0, "ODS")
-		+ Register("Flag Status Register", 8) + Bit(7, "RDY") + Bit(6, "Erase suspend") + Bit(5, "Erase fail") + Bit(4, "Program fail") + Bit(3, "VPP fail") + Bit(2, "Program suspend") + Bit(1, "Protection fail")
-		+ Register("Lock Register", 8) + Bit(1, "SLD") + Bit(0, "SWL")
-
-		+ Cmd24(0xAF, "Multiple I/O READ ID") /* TODO: */
-		+ Cmd124(0x5A, "SFDP", "Read SFDP Register") + ADDR + DummyBytes(1) + OP_DATA_READ
-		+ Cmd124(0x0B, "R", "Fast Read") + ADDR + DummyBytes(1) + OP_DATA_READ
-		+ Cmd12(0x3B, "R", "R 1-1-2", "Fast Read Dual Ouput") + ADDR + DummyBytes(1) + DUAL_DATA + OP_DATA_READ
-		+ Cmd12(0xBB, "R", "R 1-2-2", "Fast Read Dual I/O") + DUAL_IO + ADDR + M + DummyBytes(1) + OP_DATA_READ
-		+ Cmd14(0x6B, "R", "R 1-1-4", "Fast Read Quad Output") + ADDR + DummyBytes(1) + QUAD_DATA + OP_DATA_READ
-		+ Cmd14(0xEB, "R", "R 1-4-4", "Fast Read Quad I/O") + QUAD_IO + ADDR + M + DummyBytes(2) + OP_DATA_READ
-
-		+ Cmd124(0x06, "WREN", "Write Enable")
-		+ Cmd124(0x04, "WRDI", "Write Disable")
-		+ Cmd124(0x05, "RDSR", "Read status register") + RegisterRead("Status Register-1")
-		+ Cmd124(0x01, "WS1", "Write status register") + RegisterWrite("Status Register-1")
-		+ Cmd124(0xE8, "RDLR", "Read lock register") + RegisterRead("Lock Register")
-		+ Cmd124(0xE5, "WRLR", "Write lock register") + RegisterWrite("Lock Register")
-		+ Cmd124(0x70, "RDFSR", "Read flag status register") + RegisterRead("Flag Status Register")
-		+ Cmd124(0x50, "WRFSR", "Write flag status register") + RegisterWrite("Flag Status Register")
-		+ Cmd124(0xB5, "RDNVCR", "Read nonvolatile configuration register") + RegisterRead("Nonvolatile Configuration Register")
-		+ Cmd124(0xB1, "WRNVCR", "Write nonvolatile configuration register") + RegisterWrite("Nonvolatile Configuration Register")
-		+ Cmd124(0x85, "RDVCR", "Read volatile configuration register") + RegisterRead("Volatile Configuration Register")
-		+ Cmd124(0x81, "WRVCR", "Write volatile configuration register") + RegisterWrite("Volatile Configuration Register")
-		+ Cmd124(0x85, "RDEVCR", "Read enhanced volatile configuration register") + RegisterRead("Enhanced Volatile Configuration Register")
-		+ Cmd124(0x81, "WREVCR", "Write enhanced volatile configuration register") + RegisterWrite("Enhanced Volatile Configuration Register")
-
-		+ Cmd124(0x02, "PP", "Page Program") + ADDR + OP_DATA_WRITE
-		+ Cmd12(0xA2, "DPP", "Dual Input Fast Program") + DUAL_DATA + ADDR + OP_DATA_WRITE
-		+ Cmd12(0xD2, "DPP", "Extended Dual Input Fast Program") + DUAL_IO + ADDR + OP_DATA_WRITE
-
-		+ Cmd14(0x32, "QPP", "Quad Input Fast program") + DUAL_DATA + ADDR + OP_DATA_WRITE
-		+ Cmd14(0x12, "QPP", "Extended Quad Input Fast Program") + DUAL_IO + ADDR + OP_DATA_WRITE
-
-		+ Cmd124(0x20, "SSE", "Subsector erase") + ADDR
-		+ Cmd124(0xD8, "SE", "Sector erase") + ADDR
-		+ Cmd124(0xC7, "BE", "Bulk erase") + ADDR
-		+ Cmd124(0x75, "SUSP", "Erase/Program Suspend")
-		+ Cmd124(0x7A, "RESM", "Erase/Program Resume")
-
-		+ Cmd124(0x75, "ROTP", "Read OTP Array") + OP_DATA_READ
-		+ Cmd124(0x7A, "POTP", "Program OTP Array") + OP_DATA_WRITE
-
-		+ CommandSet(0xBF, "Microchip", 0xEF)
-		+ Register("Status Register", 8) + Bit(7, "BUSY") + Bit(5, "SEC") + Bit(4, "WPLD") + Bit(3, "WSP") + Bit(2, "WSE") + Bit(1, "WEL") + Bit(0, "BUSY")
-		+ Register("Configuration Register", 8) + Bit(7, "WPEN") + Bit(3, "BPNV") + Bit(1, "IOC")
-		+ Cmd1(0x05, "RDSR", "Read status register") + RegisterRead("Status Register")
-		+ Cmd4(0x05, "RDSR", "Read status register") + DummyBytes(1) + RegisterRead("Status Register")
-		+ Cmd1(0x35, "RDCR", "Read configuration register") + RegisterWrite("Configuration Register")
-		+ Cmd4(0x35, "RDCR", "Read configuration register") + DummyBytes(1) + RegisterWrite("Configuration Register")
-		+ Cmd4(0x0B, "R", "Fast Read") + ADDR + DummyBytes(3) + OP_DATA_READ
-		+ Cmd1(0xEB, "R", "R 1-4-4", "Fast Read Quad I/O") + QUAD_IO + ADDR + M + DummyBytes(3) + OP_DATA_READ
-		+ Cmd14(0xC0, "SB", "Set Burst Length") + OP_DATA_WRITE
-		+ Cmd4(0x0C, "RBSQI", "Burst Read with Wrap") + ADDR + M + DummyBytes(3) + OP_DATA_READ
-		+ Cmd1(0xEC, "RBSPI", "Burst Read with Wrap") + ADDR + M + DummyBytes(3) + OP_DATA_READ
-		+ Cmd14(0xB0, "SUSP", "Erase/Program Suspend")
-		+ Cmd14(0x30, "RESM", "Erase/Program Resume")
-
-		+ Cmd1(0x72, "RBPR", "Read Block Protection Register") + OP_DATA_READ
-		+ Cmd4(0x72, "RBPR", "Read Block Protection Register") + DummyBytes(1) + OP_DATA_READ
-		+ Cmd14(0x8D, "LBPR", "Lock Down Block Protection Register")
-		+ Cmd14(0xE8, "nVWLDR", "Non-volatile Write Lock Down Register") + OP_DATA_WRITE
-		+ Cmd14(0x98, "ULBPR", "Global Block Protection Unlock")
-		+ Cmd1(0x88, "RSID", "Read Security ID") + ADDR2 + DummyBytes(1) + OP_DATA_READ
-		+ Cmd4(0x88, "RSID", "Read Security ID") + ADDR2 + DummyBytes(3) + OP_DATA_READ
-		+ Cmd14(0xA5, "PSID", "Program User Security ID Area") + ADDR2 + OP_DATA_WRITE
-		+ Cmd14(0x85, "LSID", "Lockout Security ID Programming")
-
-		;
+    if (parent)
+    {
+        std::sort(cmds.begin(), cmds.end());
+        cmds.erase(std::unique(cmds.begin(), cmds.end()), cmds.end());
+    }
 }
 
-SpiFlash::SpiFlash() : mSpiMode(SPI_MODE0), mDefBusMode(SINGLE), mCurBusMode(SINGLE), mCurrentCmd(nullptr), mActiveCmdSet(nullptr), mDataIn(false), mAddressBits(24)
+void CmdSet::GetContinuousReadCommands(std::vector<const SpiCmdData*>& cmds) const
 {
-	addCommands(*this);
+    const CmdSet* parent = FindCmdSetById(mParentId);
+    if (parent)
+    {
+        parent->GetContinuousReadCommands(cmds);
+    }
+
+    for (uint16_t i = 0; i < mCmdCount; ++i)
+    {
+        if (!mCmds[i].mContinuousRead)
+        {
+            continue;
+        }
+
+        bool found = false;
+        for (const SpiCmdData* existing : cmds)
+        {
+            if (existing->mCode == mCmds[i].mCode)
+            {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            cmds.push_back(&mCmds[i]);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SpiFlash runtime class
+// ---------------------------------------------------------------------------
+
+SpiFlash::SpiFlash()
+    : mActiveCmdSet(nullptr)
+    , mCurrentCmd(nullptr)
+    , mSpiMode(SPI_MODE0)
+    , mDefBusMode(SINGLE)
+    , mCurBusMode(SINGLE)
+    , mAddressBits(24)
+    , mDataIn(false)
+{
+    for (size_t i = 0; i < kCmdSetCount; ++i)
+    {
+        mCmdSetPtrs.push_back(&kCmdSets[i]);
+    }
+
+    SelectCmdSet(0); // default to Common ("Unspecified")
+}
+
+const CmdSet* SpiFlash::GetCommandSet(int id) const
+{
+    return FindCmdSetById(id);
+}
+
+void SpiFlash::SelectCmdSet(int id)
+{
+    mActiveCmdSet = GetCommandSet(id);
+}
+
+const SpiCmdData* SpiFlash::GetCommand(BusMode mode, uint8_t code) const
+{
+    return mActiveCmdSet ? mActiveCmdSet->GetCommand(mode, code) : nullptr;
+}
+
+void SpiFlash::GetValidCommands(std::vector<uint8_t>& cmds) const
+{
+    cmds.clear();
+    if (mActiveCmdSet)
+    {
+        mActiveCmdSet->GetValidCommands(mCurBusMode, cmds);
+    }
 }
 
 SpiFlash spiFlash;
-

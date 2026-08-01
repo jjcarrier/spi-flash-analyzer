@@ -27,6 +27,7 @@
 #include <AnalyzerHelpers.h>
 #include "SpiFlashAnalyzer.h"
 #include "SpiFlashAnalyzerSettings.h"
+#include <cstdio>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -69,6 +70,222 @@ static std::string RegisterString(const RegisterData *reg, U64 val, bool full = 
         }
     }
     return s.str();
+}
+
+static void FormatHexByte(U8 value, char *buffer, size_t buffer_size)
+{
+    std::snprintf(buffer, buffer_size, "%02X", value);
+}
+
+static void FormatHexAddress(U32 value, char *buffer, size_t buffer_size)
+{
+    std::snprintf(buffer, buffer_size, "%X", value);
+}
+
+static bool IsPrintableAscii(U8 value)
+{
+    return value >= 0x20 && value <= 0x7E;
+}
+
+static const char *TabularDataPrefix(U32 offset)
+{
+    if (offset == 0) return "\t";
+
+    return (offset % 16u) == 0 ? "\n\t" : " ";
+}
+
+static std::string BuildTabularHexRegion(const U8 (&values)[16], const bool (&present)[16])
+{
+    std::string hex_region;
+    hex_region.reserve((16u * 3u) - 1u);
+
+    char number_str[3];
+    for (U32 i = 0; i < 16; ++i)
+    {
+        if (i != 0)
+        {
+            hex_region += ' ';
+        }
+
+        if (present[i])
+        {
+            FormatHexByte(values[i], number_str, sizeof(number_str));
+            hex_region += number_str;
+        }
+        else
+        {
+            hex_region += "  ";
+        }
+    }
+
+    return hex_region;
+}
+
+static std::string BuildTabularAsciiRegion(const U8 (&values)[16], const bool (&present)[16])
+{
+    std::string ascii_region(16, ' ');
+
+    for (U32 i = 0; i < 16; ++i)
+    {
+        if (present[i])
+        {
+            ascii_region[i] = IsPrintableAscii(values[i]) ? char(values[i]) : '.';
+        }
+    }
+
+    return ascii_region;
+}
+
+static bool GetTabularDataOperation(const SpiCmdData *cmd, const char *&operation)
+{
+    if (cmd == nullptr)
+    {
+        return false;
+    }
+
+    if (cmd->mCmdOp == OP_DATA_READ)
+    {
+        operation = "RD";
+        return true;
+    }
+
+    if (cmd->mCmdOp == OP_DATA_WRITE)
+    {
+        operation = "WR";
+        return true;
+    }
+
+    return false;
+}
+
+static bool GetTabularPayloadByte(const Frame &frame, U32 &offset, U8 &value)
+{
+    if (frame.mType == FT_OUT_BYTE)
+    {
+        U64 packed = frame.mData1;
+        offset     = U32(packed >> 8);
+        value      = U8(packed & 0xFF);
+        return true;
+    }
+
+    if (frame.mType == FT_IN_BYTE)
+    {
+        U64 packed = frame.mData2;
+        offset     = U32(packed >> 8);
+        value      = U8(packed & 0xFF);
+        return true;
+    }
+
+    return false;
+}
+
+static bool IsLastTabularPayloadByte(SpiFlashAnalyzerResults *results, U64 frame_index, U32 offset)
+{
+    const U64 num_frames = results->GetNumFrames();
+    for (U64 i = frame_index + 1; i < num_frames; ++i)
+    {
+        Frame next_frame = results->GetFrame(i);
+
+        U32 next_offset = 0;
+        U8 next_value   = 0;
+        if (GetTabularPayloadByte(next_frame, next_offset, next_value))
+        {
+            return next_offset != (offset + 1u);
+        }
+
+        if (next_frame.mType == FT_CMD)
+        {
+            return true;
+        }
+    }
+
+    return true;
+}
+
+static void CollectCompletedTabularLineBytes(SpiFlashAnalyzerResults *results,
+                                             U64 frame_index,
+                                             U32 line_start_offset,
+                                             U8 (&values)[16],
+                                             bool (&present)[16])
+{
+    for (S64 i = S64(frame_index); i >= 0; --i)
+    {
+        U32 offset = 0;
+        U8 value   = 0;
+        if (!GetTabularPayloadByte(results->GetFrame(U64(i)), offset, value))
+        {
+            if (U64(i) != frame_index)
+            {
+                break;
+            }
+
+            continue;
+        }
+
+        if (offset < line_start_offset)
+        {
+            break;
+        }
+
+        const U32 slot = offset - line_start_offset;
+        if (slot < 16u)
+        {
+            values[slot]  = value;
+            present[slot] = true;
+        }
+
+        if (offset == line_start_offset)
+        {
+            break;
+        }
+    }
+}
+
+static bool FindTabularTransactionHeader(SpiFlashAnalyzerResults *results,
+                                         U64 frame_index,
+                                         const char *&operation,
+                                         U32 &address,
+                                         bool &has_address)
+{
+    operation   = nullptr;
+    has_address = false;
+    address     = 0;
+
+    for (S64 i = S64(frame_index); i >= 0; --i)
+    {
+        Frame frame = results->GetFrame(U64(i));
+
+        if (!has_address && (frame.mType == FT_OUT_ADDR24 || frame.mType == FT_OUT_ADDR32))
+        {
+            address     = U32(frame.mData1);
+            has_address = true;
+        }
+
+        if (frame.mType == FT_CMD_BYTE)
+        {
+            const SpiCmdData *cmd = reinterpret_cast<const SpiCmdData *>(frame.mData2);
+            return U64(cmd) > SPI_FLASH_INVALID_CMD && GetTabularDataOperation(cmd, operation);
+        }
+
+        if (frame.mType == FT_CMD)
+        {
+            const SpiCmdData *cmd = reinterpret_cast<const SpiCmdData *>(frame.mData2);
+            if (U64(cmd) > SPI_FLASH_INVALID_CMD && GetTabularDataOperation(cmd, operation))
+            {
+                if (!has_address && cmd->mAddressBits)
+                {
+                    address     = U32(frame.mData1 >> 24);
+                    has_address = true;
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    return false;
 }
 
 void SpiFlashAnalyzerResults::AddRegisterResult(const RegisterData *reg, U64 val, DisplayBase display_base)
@@ -291,79 +508,43 @@ void SpiFlashAnalyzerResults::GenerateFrameTabularText(U64 frame_index, DisplayB
     Frame frame = GetFrame(frame_index);
 
     char number_str[128];
-    char number_str2[10];
-    if (frame.mType == FT_CMD)
+    U32 offset = 0;
+    U8 value   = 0;
+    if (GetTabularPayloadByte(frame, offset, value))
     {
-        const SpiCmdData *cmd = reinterpret_cast<const SpiCmdData *>(frame.mData2);
-        if (U64(cmd) > 0x100)
+        if ((offset % 16u) != 15u && !IsLastTabularPayloadByte(this, frame_index, offset))
         {
-            const char *s[4] = { 0 };
-            if (cmd->mAddressBits)
-            {
-                U32 addr = U32(frame.mData1 >> 24);
-                s[0]     = " A=";
-                s[1]     = number_str;
-                AnalyzerHelpers::GetNumberString(addr, Hexadecimal, AddressBits(addr), number_str, sizeof(number_str));
-            }
-            if (cmd->mCmdOp == OP_DATA_READ || cmd->mCmdOp == OP_DATA_WRITE)
-            {
-                s[2] = " Bytes:";
-                s[3] = number_str2;
-                AnalyzerHelpers::GetNumberString(frame.mData1 & 0xFFFFFF,
-                                                 Decimal,
-                                                 24,
-                                                 number_str2,
-                                                 sizeof(number_str2));
-            }
-            // Add longest name with address and byte count if present
-            AddTabularText("\n", cmd->LastName(), s[0], s[1], s[2], s[3]);
+            return;
         }
-        else
+
+        const U32 line_start_offset = offset - (offset % 16u);
+        std::string prefix = TabularDataPrefix(line_start_offset);
+        if (line_start_offset == 0)
         {
-            if (frame.mData2 != 0x100)
+            const char *operation = nullptr;
+            U32 address           = 0;
+            bool has_address      = false;
+            if (FindTabularTransactionHeader(this, frame_index, operation, address, has_address))
             {
-                AnalyzerHelpers::GetNumberString(frame.mData2, display_base, 8, number_str, sizeof(number_str));
-                AddTabularText("\n?? CMD=", number_str);
+                if (has_address)
+                {
+                    FormatHexAddress(address, number_str, sizeof(number_str));
+                    prefix = std::string("\n") + operation + " @ 0x" + number_str + ":\n\t";
+                }
+                else
+                {
+                    prefix = std::string("\n") + operation + ":\n\t";
+                }
             }
         }
-    }
-    else if (frame.mType == FT_OUT_ADDR24)
-    {
-        AnalyzerHelpers::GetNumberString(frame.mData1,
-                                         Hexadecimal,
-                                         AddressBits(U32(frame.mData1 >> 24)),
-                                         number_str,
-                                         sizeof(number_str));
-        AddTabularText(" A=", number_str);
-    }
-    else if ((frame.mType == FT_OUT_BYTE || frame.mType == FT_IN_OUT))
-    {
-        U64 packed = frame.mData1;
-        U32 offset = U32(packed >> 8);
-        U8 mosi    = U8(packed & 0xFF);
-        char offset_str[64];
-        AnalyzerHelpers::GetNumberString(offset, Decimal, 32, offset_str, sizeof(offset_str));
-        AnalyzerHelpers::GetNumberString(mosi, display_base, 8, number_str, sizeof(number_str));
-        AddTabularText(" ", offset_str, ":", number_str);
-    }
-    else if ((frame.mType == FT_M))
-    {
-        AnalyzerHelpers::GetNumberString(frame.mData1, Hexadecimal, 8, number_str, sizeof(number_str));
-        AddTabularText(" M=", number_str);
-    }
-    else if ((frame.mType == FT_IN_BYTE || frame.mType == FT_IN_OUT))
-    {
-        U64 packed = frame.mData1;
-        U32 offset = U32(packed >> 8);
-        U8 miso    = U8(frame.mData2 & 0xFF);
-        char offset_str[64];
-        AnalyzerHelpers::GetNumberString(offset, Decimal, 32, offset_str, sizeof(offset_str));
-        AnalyzerHelpers::GetNumberString(miso, display_base, 8, number_str, sizeof(number_str));
-        AddTabularText(" ", offset_str, ":", number_str);
-    }
-    else if (frame.mType == FT_DUMMY)
-    {
-        AddTabularText(" Dummy");
+
+        U8 line_values[16]   = {};
+        bool line_present[16] = {};
+        CollectCompletedTabularLineBytes(this, frame_index, line_start_offset, line_values, line_present);
+
+        const std::string hex_region   = BuildTabularHexRegion(line_values, line_present);
+        const std::string ascii_region = BuildTabularAsciiRegion(line_values, line_present);
+        AddTabularText(prefix.c_str(), hex_region.c_str(), "  ", ascii_region.c_str());
     }
 }
 

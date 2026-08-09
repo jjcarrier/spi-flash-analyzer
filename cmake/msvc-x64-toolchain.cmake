@@ -46,6 +46,17 @@ set(CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES
     "${WIN10_SDK_ROOT}/Include/${WIN10_SDK_VERSION}/winrt"
 )
 
+# rc.exe does not inherit the C/C++ standard include directories, so pass the
+# Windows SDK include roots explicitly to resource compilation.
+set(_WINDOWS_RC_INCLUDE_FLAGS
+    "/I\"${WIN10_SDK_ROOT}/Include/${WIN10_SDK_VERSION}/ucrt\""
+    "/I\"${WIN10_SDK_ROOT}/Include/${WIN10_SDK_VERSION}/shared\""
+    "/I\"${WIN10_SDK_ROOT}/Include/${WIN10_SDK_VERSION}/um\""
+    "/I\"${WIN10_SDK_ROOT}/Include/${WIN10_SDK_VERSION}/winrt\""
+)
+list(JOIN _WINDOWS_RC_INCLUDE_FLAGS " " _WINDOWS_RC_INCLUDE_FLAGS)
+set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} ${_WINDOWS_RC_INCLUDE_FLAGS}")
+
 # Library paths
 link_directories(
     "${MSVC_TOOLSET_DIR}/lib/x64"

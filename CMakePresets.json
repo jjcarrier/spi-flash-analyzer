@@ -27,11 +27,11 @@
       }
     },
     {
-      "name": "ninja-debug",
+      "name": "ninja-windows-debug",
       "displayName": "Ninja Debug (MSVC)",
       "generator": "Ninja",
       "description": "Use Ninja generator with MSVC for Debug build.",
-      "binaryDir": "${sourceDir}/build/ninja-debug",
+      "binaryDir": "${sourceDir}/build/ninja-windows-debug",
       "architecture": {
         "value": "x64",
         "strategy": "external"
@@ -47,11 +47,11 @@
       }
     },
     {
-      "name": "ninja-release",
+      "name": "ninja-windows-release",
       "displayName": "Ninja Release (MSVC)",
       "generator": "Ninja",
       "description": "Use Ninja generator with MSVC for Release build.",
-      "binaryDir": "${sourceDir}/build/ninja-release",
+      "binaryDir": "${sourceDir}/build/ninja-windows-release",
       "architecture": {
         "value": "x64",
         "strategy": "external"
@@ -63,6 +63,16 @@
       "toolchainFile": "${sourceDir}/cmake/msvc-x64-toolchain.cmake",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "ninja-linux-release",
+      "displayName": "Ninja (Linux)",
+      "generator": "Ninja",
+      "description": "Use Ninja generator for Linux/WSL builds.",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
     }
@@ -77,12 +87,16 @@
       "configurePreset": "vs2026-x64-release"
     },
     {
-      "name": "ninja-debug",
-      "configurePreset": "ninja-debug"
+      "name": "ninja-windows-debug",
+      "configurePreset": "ninja-windows-debug"
     },
     {
-      "name": "ninja-release",
-      "configurePreset": "ninja-release"
+      "name": "ninja-windows-release",
+      "configurePreset": "ninja-windows-release"
+    },
+    {
+      "name": "ninja-linux-release",
+      "configurePreset": "ninja-linux-release"
     }
   ]
 }

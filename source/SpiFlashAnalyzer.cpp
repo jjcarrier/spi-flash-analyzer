@@ -554,6 +554,63 @@ U8 SpiFlashAnalyzer::GetBits(BusMode mode, bool dirIn)
     return b;
 }
 
+void SpiFlashAnalyzer::AddSampleMarkers(U64 sample, BusMode mode, bool dirIn)
+{
+    if (!mSettings->mEnableSampleMarkers)
+    {
+        return;
+    }
+
+    if (mode == SINGLE)
+    {
+        if (dirIn)
+        {
+            if (mMiso)
+            {
+                mResults->AddMarker(sample, AnalyzerResults::Dot, mSettings->mMiso);
+            }
+        }
+        else if (mMosi)
+        {
+            mResults->AddMarker(sample, AnalyzerResults::Dot, mSettings->mMosi);
+        }
+
+        return;
+    }
+
+    if (mMosi)
+    {
+        mResults->AddMarker(sample, AnalyzerResults::Dot, mSettings->mMosi);
+    }
+    if (mMiso)
+    {
+        mResults->AddMarker(sample, AnalyzerResults::Dot, mSettings->mMiso);
+    }
+    if (mode == QUAD)
+    {
+        if (mD2)
+        {
+            mResults->AddMarker(sample, AnalyzerResults::Dot, mSettings->mD2);
+        }
+        if (mD3)
+        {
+            mResults->AddMarker(sample, AnalyzerResults::Dot, mSettings->mD3);
+        }
+    }
+}
+
+void SpiFlashAnalyzer::AddMosiMisoSampleMarkers(U64 sample)
+{
+    if (mMosi)
+    {
+        mResults->AddMarker(sample, AnalyzerResults::Dot, mSettings->mMosi);
+    }
+    if (mMiso)
+    {
+        mResults->AddMarker(sample, AnalyzerResults::Dot, mSettings->mMiso);
+    }
+}
+
 int SpiFlashAnalyzer::ExtractBits(U64 &start, U64 &end, U32 &val, U8 neededBits)
 {
     BusMode mode = mCurrentBusMode;
@@ -590,6 +647,7 @@ int SpiFlashAnalyzer::ExtractBits(U64 &start, U64 &end, U32 &val, U8 neededBits)
     {
         AdvanceDataToAbsPosition(mCachedClocks[i] >> 1);
         mResults->AddMarker(mCachedClocks[i] >> 1, AnalyzerResults::UpArrow, mSettings->mClock);
+        AddSampleMarkers(mCachedClocks[i] >> 1, mode, mDirIn);
         val <<= mode;
         val |= GetBits(mode, mDirIn);
         bitCount += mode;
@@ -634,6 +692,7 @@ int SpiFlashAnalyzer::ExtractMosiMiso(U64 &start, U64 &end, U8 &mosi, U8 &miso)
         for (auto bitCount = 0; bitCount < 8; ++bitCount, i += 2)
         {
             AdvanceDataToAbsPosition(mCachedClocks[i] >> 1);
+            //AddMosiMisoSampleMarkers(mCachedClocks[i] >> 1);
             if (mMosi)
             {
                 mosi = (mosi << 1) + (mMosi->GetBitState() == BIT_HIGH ? 1 : 0);

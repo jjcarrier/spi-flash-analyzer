@@ -38,6 +38,7 @@ SpiFlashAnalyzerSettings::SpiFlashAnalyzerSettings()
     , mAddressLength(SPI_FLASH_ADDR_BITS_24)
     , mSpiMode(SPI_FLASH_CMD_NOT_SET)
     , mBusMode(1)
+    , mEnableSampleMarkers(false)
     , mEnableCommandSummary(false)
     , mIncludeWREN(true)
     , mIncludeRDSR(true)
@@ -122,6 +123,11 @@ SpiFlashAnalyzerSettings::SpiFlashAnalyzerSettings()
     }
     mContinuousReadInterface->SetNumber(0);
 
+    mEnableSampleMarkersInterface.reset(new AnalyzerSettingInterfaceBool());
+    mEnableSampleMarkersInterface->SetCheckBoxText("Show sample-point markers");
+    mEnableSampleMarkersInterface->SetValue(mEnableSampleMarkers);
+
+
     mEnableCommandSummaryInterface.reset(new AnalyzerSettingInterfaceBool());
     mEnableCommandSummaryInterface->SetCheckBoxText("Show command summary on CS");
     mEnableCommandSummaryInterface->SetValue(mEnableCommandSummary);
@@ -147,6 +153,7 @@ SpiFlashAnalyzerSettings::SpiFlashAnalyzerSettings()
     AddInterface(mSpiModeInterface.get());
     AddInterface(mBusModeInterface.get());
     AddInterface(mContinuousReadInterface.get());
+    AddInterface(mEnableSampleMarkersInterface.get());
     AddInterface(mEnableCommandSummaryInterface.get());
     AddInterface(mIncludeWRENInterface.get());
     AddInterface(mIncludeRDSRInterface.get());
@@ -182,6 +189,7 @@ bool SpiFlashAnalyzerSettings::SetSettingsFromInterfaces()
     mMiso           = mMisoInterface->GetChannel();
     mD2             = mD2Interface->GetChannel();
     mD3             = mD3Interface->GetChannel();
+    mEnableSampleMarkers = mEnableSampleMarkersInterface->GetValue();
     mEnableCommandSummary = mEnableCommandSummaryInterface->GetValue();
     mIncludeWREN    = mIncludeWRENInterface->GetValue();
     mIncludeRDSR    = mIncludeRDSRInterface->GetValue();
@@ -213,6 +221,7 @@ void SpiFlashAnalyzerSettings::UpdateInterfacesFromSettings()
     mMisoInterface->SetChannel(mMiso);
     mD2Interface->SetChannel(mD2);
     mD3Interface->SetChannel(mD3);
+    mEnableSampleMarkersInterface->SetValue(mEnableSampleMarkers);
     mEnableCommandSummaryInterface->SetValue(mEnableCommandSummary);
     mIncludeWRENInterface->SetValue(mIncludeWREN);
     mIncludeRDSRInterface->SetValue(mIncludeRDSR);
@@ -236,10 +245,8 @@ void SpiFlashAnalyzerSettings::LoadSettings(const char *settings)
     text_archive >> mD3;
     text_archive >> mIncludeWREN;
     text_archive >> mIncludeRDSR;
-    if ((text_archive >> mEnableCommandSummary) == false)
-    {
-        mEnableCommandSummary = true;
-    }
+    text_archive >> mEnableSampleMarkers;
+    text_archive >> mEnableCommandSummary;
 
     ClearChannels();
     AddChannel(mChipSelect, "Chip Select", true);
@@ -269,6 +276,7 @@ const char *SpiFlashAnalyzerSettings::SaveSettings()
     text_archive << mD3;
     text_archive << mIncludeWREN;
     text_archive << mIncludeRDSR;
+    text_archive << mEnableSampleMarkers;
     text_archive << mEnableCommandSummary;
 
     return SetReturnString(text_archive.GetString());

@@ -54,6 +54,7 @@ public:
     U32 mContinuousRead;
 
     // V2 Frame Filtering Options
+    bool mEnableSampleMarkers;
     bool mEnableCommandSummary;
     bool mIncludeWREN;
     bool mIncludeRDSR;
@@ -73,6 +74,7 @@ protected:
     std::unique_ptr<AnalyzerSettingInterfaceChannel> mD3Interface;
 
     // New interface pointers for checkboxes
+    std::unique_ptr<AnalyzerSettingInterfaceBool> mEnableSampleMarkersInterface;
     std::unique_ptr<AnalyzerSettingInterfaceBool> mEnableCommandSummaryInterface;
     std::unique_ptr<AnalyzerSettingInterfaceBool> mIncludeWRENInterface;
     std::unique_ptr<AnalyzerSettingInterfaceBool> mIncludeRDSRInterface;

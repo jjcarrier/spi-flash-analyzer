@@ -99,6 +99,8 @@ private:
     }
 
     U8 GetBits(BusMode mode, bool dirIn);
+    void AddSampleMarkers(U64 sample, BusMode mode, bool dirIn);
+    void AddMosiMisoSampleMarkers(U64 sample);
     int ExtractBits(U64 &start, U64 &end, U32 &val, U8 bitCount);
     int ExtractMosiMiso(U64 &start, U64 &end, U8 &mosi, U8 &miso);
 

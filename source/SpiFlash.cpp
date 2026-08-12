@@ -262,8 +262,7 @@ static const SpiCmdData kCmds_Macronix[] = {
 // (no GigaDevice-specific commands)
 
 // ===========================================================================
-// ADESTO (id = 0x1F -- duplicate of Renesas; unreachable via GetCommandSet()
-// which returns the first match, preserving original behaviour)
+// ADESTO (id = 0xA1, parent = 0)
 // ===========================================================================
 
 static const SpiCmdData kCmds_Adesto[] = {
@@ -497,18 +496,18 @@ static const SpiCmdData kCmds_Microchip[] = {
 // ===========================================================================
 
 static const CmdSet kCmdSets[] = {
-    // { id,    name,          parentId,  cmds,             cmdCount }
-    { 0x00, "Unspecified", -1,   kCmds_Common,    static_cast<uint16_t>(std::size(kCmds_Common))    },
-    { 0x1F, "Renesas",     0,    kCmds_Renesas,   static_cast<uint16_t>(std::size(kCmds_Renesas))   },
-    { 0xEF, "Winbond",     0,    kCmds_Winbond,   static_cast<uint16_t>(std::size(kCmds_Winbond))   },
-    { 0xC2, "Macronix",    0,    kCmds_Macronix,  static_cast<uint16_t>(std::size(kCmds_Macronix))  },
+    // { id, name,     parentId, cmds,            cmdCount }
+    { 0x00, "Unspecified",   -1, kCmds_Common,    static_cast<uint16_t>(std::size(kCmds_Common))    },
+    { 0x1F, "Renesas",     0x00, kCmds_Renesas,   static_cast<uint16_t>(std::size(kCmds_Renesas))   },
+    { 0xEF, "Winbond",     0x00, kCmds_Winbond,   static_cast<uint16_t>(std::size(kCmds_Winbond))   },
+    { 0xC2, "Macronix",    0x00, kCmds_Macronix,  static_cast<uint16_t>(std::size(kCmds_Macronix))  },
     { 0xC8, "GigaDevice",  0xEF, nullptr,         0                                                 },
-    { 0x1F, "Adesto",      0,    kCmds_Adesto,    static_cast<uint16_t>(std::size(kCmds_Adesto))    },
-    { 0x01, "Cypress",     0,    kCmds_Cypress,   static_cast<uint16_t>(std::size(kCmds_Cypress))   },
+    { 0xA1, "Adesto",      0x00, kCmds_Adesto,    static_cast<uint16_t>(std::size(kCmds_Adesto))    },
+    { 0x01, "Cypress",     0x00, kCmds_Cypress,   static_cast<uint16_t>(std::size(kCmds_Cypress))   },
     { 0x9D, "Issi",        0xEF, kCmds_Issi,      static_cast<uint16_t>(std::size(kCmds_Issi))      },
-    { 0x20, "Micron",      0,    kCmds_Micron,    static_cast<uint16_t>(std::size(kCmds_Micron))    },
+    { 0x20, "Micron",      0x00, kCmds_Micron,    static_cast<uint16_t>(std::size(kCmds_Micron))    },
     { 0xBF, "Microchip",   0xEF, kCmds_Microchip, static_cast<uint16_t>(std::size(kCmds_Microchip)) },
-    { 0x04, "Fujitsu",     0,    nullptr,         0                                                 },
+    { 0x04, "Fujitsu",     0x00, nullptr,         0                                                 },
 };
 static constexpr size_t kCmdSetCount = std::size(kCmdSets);
 

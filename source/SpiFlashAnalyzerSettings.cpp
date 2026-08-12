@@ -27,6 +27,38 @@
 #include <AnalyzerHelpers.h>
 #include "SpiFlash.h"
 
+namespace
+{
+bool HasListValue(AnalyzerSettingInterfaceNumberList* setting, double value)
+{
+    const U32 count = setting->GetListboxNumbersCount();
+    for (U32 index = 0; index < count; ++index)
+    {
+        if (setting->GetListboxNumber(index) == value)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+U32 GetValidListValue(AnalyzerSettingInterfaceNumberList* setting, U32 value, U32 fallback)
+{
+    if (HasListValue(setting, value))
+    {
+        return value;
+    }
+
+    if (HasListValue(setting, fallback))
+    {
+        return fallback;
+    }
+
+    return setting->GetListboxNumbersCount() ? U32(setting->GetListboxNumber(0)) : fallback;
+}
+} // namespace
+
 SpiFlashAnalyzerSettings::SpiFlashAnalyzerSettings()
     : mChipSelect(UNDEFINED_CHANNEL)
     , mClock(UNDEFINED_CHANNEL)
@@ -210,6 +242,12 @@ bool SpiFlashAnalyzerSettings::SetSettingsFromInterfaces()
 
 void SpiFlashAnalyzerSettings::UpdateInterfacesFromSettings()
 {
+    mManufacturer   = GetValidListValue(mManufacturerInterface.get(), mManufacturer, 0);
+    mAddressLength  = GetValidListValue(mAddressLengthInterface.get(), mAddressLength, SPI_FLASH_ADDR_BITS_24);
+    mSpiMode        = GetValidListValue(mSpiModeInterface.get(), mSpiMode, SPI_FLASH_CMD_NOT_SET);
+    mBusMode        = GetValidListValue(mBusModeInterface.get(), mBusMode, 1);
+    mContinuousRead = GetValidListValue(mContinuousReadInterface.get(), mContinuousRead, 0);
+
     mManufacturerInterface->SetNumber(mManufacturer);
     mAddressLengthInterface->SetNumber(mAddressLength);
     mSpiModeInterface->SetNumber(mSpiMode);
@@ -257,6 +295,7 @@ void SpiFlashAnalyzerSettings::LoadSettings(const char *settings)
     AddChannel(mD3, "D3", true);
 
     UpdateInterfacesFromSettings();
+    spiFlash.SelectCmdSet(mManufacturer);
 }
 
 const char *SpiFlashAnalyzerSettings::SaveSettings()

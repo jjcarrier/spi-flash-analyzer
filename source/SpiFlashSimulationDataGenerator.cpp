@@ -34,6 +34,21 @@
 
 namespace
 {
+BusMode NormalizeBusMode(int mode)
+{
+    switch (mode)
+    {
+    case SINGLE:
+        return SINGLE;
+    case DUAL:
+        return DUAL;
+    case QUAD:
+        return QUAD;
+    default:
+        return SINGLE;
+    }
+}
+
 enum SpiFlashSimulationStates
 {
     CLOCK_LOW        = 0,
@@ -95,15 +110,17 @@ void SpiFlashSimulationDataGenerator::Initialize(U32 simulation_sample_rate, Spi
     double target_frequency = simulation_sample_rate / 10;
     mSimulationSampleRateHz = simulation_sample_rate;
     mSettings               = settings;
+    const BusMode initialBusMode = NormalizeBusMode(settings ? settings->mBusMode : SINGLE);
     if (target_frequency > 104000000)
     {
         target_frequency = 104000000;
     }
     mClockGenerator.Init(target_frequency, simulation_sample_rate);
     SetSpiMode(mSettings->mSpiMode == SPI_MODE3 ? SPI_MODE3 : SPI_MODE0);
+    spiFlash.SelectCmdSet(spiFlash.GetCommandSet(mSettings->mManufacturer) ? mSettings->mManufacturer : 0);
     spiFlash.SetCurrentCommand(nullptr);
-    spiFlash.SetCurrentBusMode(BusMode(mSettings->mBusMode));
-    spiFlash.SetDefaultBusMode(BusMode(mSettings->mBusMode));
+    spiFlash.SetCurrentBusMode(initialBusMode);
+    spiFlash.SetDefaultBusMode(initialBusMode);
 
     if (settings->mChipSelect.mChannelIndex < 1000)
     {
@@ -213,6 +230,8 @@ void SpiFlashSimulationDataGenerator::GenerateNext()
 
 void SpiFlashSimulationDataGenerator::GenerateByte(U8 b, std::vector<U8> &bits, BusMode busMode, bool dataIn)
 {
+    busMode = NormalizeBusMode(busMode);
+
     // Bits for all the lines at once 0 - CS, 1 - CLK, 2-5 data bits
     U8 lines = 0;
     // Mask for extracting bits x    1b    2b  x    4b
@@ -250,8 +269,8 @@ void SpiFlashSimulationDataGenerator::GenerateCommandBits(SpiFlash &flash, const
 {
     int n;
     bool dataIn        = false;
-    BusMode curBusMode = flash.GetCurrentBusMode();
-    BusMode defBusMode = flash.GetDefaultBusMode();
+    BusMode curBusMode = NormalizeBusMode(flash.GetCurrentBusMode());
+    BusMode defBusMode = NormalizeBusMode(flash.GetDefaultBusMode());
     // Add some delay before CS goes low
     bits.push_back(Delay(SPI_FLASH_DELAY_MIN + rand() % SPI_FLASH_DELAY_RANGE));
 
@@ -264,7 +283,7 @@ void SpiFlashSimulationDataGenerator::GenerateCommandBits(SpiFlash &flash, const
     // if bus width changes after command code change current bus mode
     if (cmd->mModeArgs)
     {
-        curBusMode = BusMode(cmd->mModeArgs);
+        curBusMode = NormalizeBusMode(cmd->mModeArgs);
     }
 
     // generate address
@@ -322,7 +341,7 @@ void SpiFlashSimulationDataGenerator::GenerateCommandBits(SpiFlash &flash, const
     // Switch do other bus mode if this is 1-1-2 or 1-1-4 command
     if (cmd->mModeData)
     {
-        curBusMode = BusMode(cmd->mModeData);
+        curBusMode = NormalizeBusMode(cmd->mModeData);
     }
 
     // Generate data for commands that have it
@@ -354,11 +373,11 @@ void SpiFlashSimulationDataGenerator::GenerateCommandBits(SpiFlash &flash, const
     // (commands like Enter/Exit QPI mode)
     if (cmd->mModeChange)
     {
-        defBusMode = BusMode(cmd->mModeChange);
+        defBusMode = NormalizeBusMode(cmd->mModeChange);
     }
 
-    // Switch to default bus mode
-    curBusMode = defBusMode;
+    flash.SetDefaultBusMode(defBusMode);
+    flash.SetCurrentBusMode(defBusMode);
 }
 
 void SpiFlashSimulationDataGenerator::GenerateRandomCommandBits(SpiFlash &flash, std::vector<U8> &bits)
@@ -371,6 +390,11 @@ void SpiFlashSimulationDataGenerator::GenerateRandomCommandBits(SpiFlash &flash,
     else
     {
         flash.GetValidCommands(cmds);
+        if (cmds.empty())
+        {
+            return;
+        }
+
         const SpiCmdData *cmd = flash.GetCommand(flash.GetCurrentBusMode(), cmds[rand() % cmds.size()]);
         if (cmd)
             GenerateCommandBits(flash, cmd, bits);

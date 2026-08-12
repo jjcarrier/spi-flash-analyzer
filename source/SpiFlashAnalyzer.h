@@ -107,7 +107,7 @@ private:
     void CacheClock(int num, U64 limit = 0);
     void CacheDropOlderClocks(U64 limit);
 
-    U64 mCachedClocks[64];
+    U64 mCachedClocks[SPI_FLASH_CACHED_CLOCKS];
     U8 mCachedClockCount;
 
     // Tracks byte offset for FT_IN_OUT frames within the current command.

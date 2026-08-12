@@ -43,7 +43,7 @@ constexpr unsigned SPI_FLASH_ADDR_NOT_SET = 0xFF;
 constexpr int SPI_FLASH_NUMSTR_BUF_SIZE    = 128;
 constexpr int SPI_FLASH_OFFSETSTR_BUF_SIZE = 64;
 constexpr int SPI_FLASH_EDGES_BUF_SIZE     = 10;
-constexpr int SPI_FLASH_CACHED_CLOCKS      = 64;
+constexpr int SPI_FLASH_CACHED_CLOCKS      = (2 * SPI_FLASH_ADDR_BITS_32) + 1;
 
 // Simulation/data generation
 constexpr int SPI_FLASH_DELAY_MIN   = 3;

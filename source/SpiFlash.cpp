@@ -90,9 +90,9 @@ static const SpiCmdData kCmds_Common[] = {
     { 0x31, CM_14, OP_REG_WRITE,  0,           0, 0, 0, 0, false, false, false, { "WRSR2", "Write SR2", nullptr, nullptr },                   { &kSR2_Common, nullptr, nullptr, nullptr }      },
     { 0x02, CM_14, OP_DATA_WRITE, kAddrGlobal, 0, 0, 0, 0, false, false, false, { "PP", "Page Program", nullptr, nullptr },                   { nullptr, nullptr, nullptr, nullptr }           },
     // Erase
-    { 0x20, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "SE", "SE4", "4KB Sector Erase", nullptr },                 { nullptr, nullptr, nullptr, nullptr }           },
-    { 0x52, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "BE", "BE32", "32KB Block Erase", nullptr },                { nullptr, nullptr, nullptr, nullptr }           },
-    { 0xD8, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "BE", "BE64", "64KB Block Erase", nullptr },                { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x20, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "SE", "SE4", "4kB Sector Erase", nullptr },                 { nullptr, nullptr, nullptr, nullptr }           },
+    { 0x52, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "BE", "BE32", "32kB Block Erase", nullptr },                { nullptr, nullptr, nullptr, nullptr }           },
+    { 0xD8, CM_14, OP_NO_DATA,    kAddrGlobal, 0, 0, 0, 0, false, false, false, { "BE", "BE64", "64kB Block Erase", nullptr },                { nullptr, nullptr, nullptr, nullptr }           },
     { 0x60, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "CE", "Chip Erase", nullptr, nullptr },                     { nullptr, nullptr, nullptr, nullptr }           },
     { 0xC7, CM_14, OP_NO_DATA,    0,           0, 0, 0, 0, false, false, false, { "CE", "Chip Erase", nullptr, nullptr },                     { nullptr, nullptr, nullptr, nullptr }           },
     // Misc

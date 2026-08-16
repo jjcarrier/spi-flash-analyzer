@@ -295,7 +295,7 @@ void SpiFlashAnalyzer::AddFrame(U64 start, U64 end, U64 d1, U64 d2, U8 type, U8 
         break;
     }
     case FT_OUT_REG: {
-        std::string in_value = to_hex(U8(d2));
+        std::string in_value = to_hex(U8(d1));
         mData += (mData.empty() ? "" : " ") + in_value;
         mDataLength++;
         mDataValid = true;

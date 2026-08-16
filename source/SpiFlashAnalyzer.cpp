@@ -247,7 +247,12 @@ void SpiFlashAnalyzer::AddFrame(U64 start, U64 end, U64 d1, U64 d2, U8 type, U8 
         break;
     }
     case FT_DUMMY: {
-        std::string out_value = to_hex(U8(d1));
+        int width = d2 ? int((d2 + 3) / 4) : 2;
+        if (width < 2)
+        {
+            width = 2;
+        }
+        std::string out_value = to_hex(d1, width);
         mDummy                = out_value;
         mDummyValid           = true;
         break;
@@ -803,19 +808,22 @@ void SpiFlashAnalyzer::AnalyzeCommandBits()
                 AddFrame(start, end, val, 0, FT_M, 0);
             }
 
-            U64 dummyStart = 0;
-            U64 dummyEnd   = 0;
+            U64 dummyStart    = 0;
+            U64 dummyEnd      = 0;
+            U32 dummyBitCount = 0;
 
             if (cmd.data->mDummyBytes)
             {
-                if (ExtractBits(dummyStart, dummyEnd, val, cmd.data->mDummyCount * 8) < 0)
+                dummyBitCount = U32(cmd.data->mDummyCount) * 8u;
+                if (ExtractBits(dummyStart, dummyEnd, val, U8(dummyBitCount)) < 0)
                 {
                     break;
                 }
             }
             else if (cmd.data->mDummyCycles)
             {
-                if (ExtractBits(dummyStart, dummyEnd, val, cmd.data->mDummyCycles) < 0)
+                dummyBitCount = U32(cmd.data->mDummyCount) * U32(mCurrentBusMode);
+                if (ExtractBits(dummyStart, dummyEnd, val, U8(dummyBitCount)) < 0)
                 {
                     break;
                 }
@@ -824,7 +832,7 @@ void SpiFlashAnalyzer::AnalyzeCommandBits()
             // Dummy cycles or byte found
             if (dummyEnd)
             {
-                AddFrame(dummyStart, dummyEnd, val, 0, FT_DUMMY, 0);
+                AddFrame(dummyStart, dummyEnd, val, dummyBitCount, FT_DUMMY, 0);
                 end = dummyEnd;
             }
 

@@ -332,7 +332,7 @@ void SpiFlashAnalyzerResults::GenerateBubbleText(U64 frame_index, Channel &chann
                 U32 addr = U32(frame.mData1 >> 24);
                 s[0]     = "  A=";
                 s[1]     = number_str;
-                AnalyzerHelpers::GetNumberString(addr, Hexadecimal, AddressBits(addr), number_str, 128);
+                AnalyzerHelpers::GetNumberString(addr, Hexadecimal, AddressBits(addr), number_str, SPI_FLASH_NUMSTR_BUF_SIZE);
             }
 
             if (cmd->mCmdOp == OP_DATA_READ || cmd->mCmdOp == OP_DATA_WRITE)
@@ -350,11 +350,15 @@ void SpiFlashAnalyzerResults::GenerateBubbleText(U64 frame_index, Channel &chann
         }
         else
         {
-            AddResultString("??");
+            AddResultString("?");
             if (frame.mData2 != SPI_FLASH_INVALID_CMD)
             {
-                AnalyzerHelpers::GetNumberString(frame.mData2, display_base, 8, number_str, 128);
-                AddResultString("?? CMD=", number_str);
+                AnalyzerHelpers::GetNumberString(frame.mData2,
+                                                 display_base,
+                                                 8,
+                                                 number_str,
+                                                 SPI_FLASH_NUMSTR_BUF_SIZE);
+                AddResultString("? [", number_str, "]");
             }
         }
     }
@@ -379,21 +383,18 @@ void SpiFlashAnalyzerResults::GenerateBubbleText(U64 frame_index, Channel &chann
                                              SPI_FLASH_ADDR_BITS_8,
                                              number_str,
                                              SPI_FLASH_NUMSTR_BUF_SIZE);
-            AddResultString("CMD=", number_str);
+            AddResultString("[", number_str, "]");
         }
         else
         {
             size_t i;
             U8 b = cmd->GetCode();
-            // AnalyzerHelpers::GetNumberString(b, display_base, 8, number_str, 128);
-            // AddResultString(number_str);
-            AnalyzerHelpers::GetNumberString(b, Hexadecimal, 8, number_str, 128);
-            // AddResultString("CMD=", number_str);
+            AnalyzerHelpers::GetNumberString(b, Hexadecimal, 8, number_str, SPI_FLASH_NUMSTR_BUF_SIZE);
             for (i = 0; i < cmd->NameCount(); ++i)
             {
                 AddResultString(cmd->mNames[i]);
             }
-            AddResultString(cmd->LastName(), " CMD=", number_str);
+            AddResultString(cmd->LastName(), " [", number_str, "]");
         }
     }
     else if (frame.mType == FT_OUT_ADDR24 && channel == mSettings->mMosi)
@@ -402,8 +403,7 @@ void SpiFlashAnalyzerResults::GenerateBubbleText(U64 frame_index, Channel &chann
                                          Hexadecimal,
                                          AddressBits(U32(frame.mData1 >> 24)),
                                          number_str,
-                                         128);
-        // AddResultString("A");
+                                         SPI_FLASH_NUMSTR_BUF_SIZE);
         AddResultString(number_str);
         AddResultString("A=", number_str);
     }
@@ -435,10 +435,13 @@ void SpiFlashAnalyzerResults::GenerateBubbleText(U64 frame_index, Channel &chann
     }
     else if ((frame.mType == FT_M) && channel == mSettings->mMosi)
     {
-        AnalyzerHelpers::GetNumberString(frame.mData1, display_base, 8, number_str, 128);
         AddResultString("M");
+        AnalyzerHelpers::GetNumberString(frame.mData1,
+                                         Hexadecimal,
+                                         8,
+                                         number_str,
+                                         SPI_FLASH_NUMSTR_BUF_SIZE);
         AddResultString(number_str);
-        AnalyzerHelpers::GetNumberString(frame.mData1, Hexadecimal, 8, number_str, 128);
         AddResultString("M=", number_str);
     }
     else if ((frame.mType == FT_IN_BYTE || frame.mType == FT_IN_OUT) && channel == mSettings->mMiso)

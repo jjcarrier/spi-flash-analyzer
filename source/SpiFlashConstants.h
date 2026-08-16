@@ -25,6 +25,18 @@
 #ifndef SPI_FLASH_CONSTANTS_H
 #define SPI_FLASH_CONSTANTS_H
 
+// Command bit size
+constexpr int SPI_FLASH_CMD_BITS = 8;
+
+// Data bit size
+constexpr int SPI_FLASH_DATA_BITS = 8;
+
+// Mode bit size
+constexpr int SPI_FLASH_MODE_BITS = 8;
+
+// Data offset bit size
+constexpr int SPI_FLASH_DATA_OFFSET_BITS = 32;
+
 // Address/bit sizes
 constexpr int SPI_FLASH_ADDR_BITS_8  = 8;
 constexpr int SPI_FLASH_ADDR_BITS_16 = 16;

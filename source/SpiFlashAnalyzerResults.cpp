@@ -291,7 +291,7 @@ static bool FindTabularTransactionHeader(SpiFlashAnalyzerResults *results,
 void SpiFlashAnalyzerResults::AddRegisterResult(const RegisterData *reg, U64 val, DisplayBase display_base)
 {
     char number_str[SPI_FLASH_NUMSTR_BUF_SIZE];
-    AnalyzerHelpers::GetNumberString(val, display_base, SPI_FLASH_ADDR_BITS_8, number_str, SPI_FLASH_NUMSTR_BUF_SIZE);
+    AnalyzerHelpers::GetNumberString(val, display_base, SPI_FLASH_DATA_BITS, number_str, SPI_FLASH_NUMSTR_BUF_SIZE);
     AddResultString(number_str);
     // There is register assigned
     if (reg)
@@ -355,7 +355,7 @@ void SpiFlashAnalyzerResults::GenerateBubbleText(U64 frame_index, Channel &chann
             {
                 AnalyzerHelpers::GetNumberString(frame.mData2,
                                                  display_base,
-                                                 8,
+                                                 SPI_FLASH_CMD_BITS,
                                                  number_str,
                                                  SPI_FLASH_NUMSTR_BUF_SIZE);
                 AddResultString("? [", number_str, "]");
@@ -374,23 +374,25 @@ void SpiFlashAnalyzerResults::GenerateBubbleText(U64 frame_index, Channel &chann
             // Normal byte and CMD=0xXX
             AnalyzerHelpers::GetNumberString(frame.mData2,
                                              display_base,
-                                             SPI_FLASH_ADDR_BITS_8,
+                                             SPI_FLASH_CMD_BITS,
                                              number_str,
                                              SPI_FLASH_NUMSTR_BUF_SIZE);
             AddResultString(number_str);
             AnalyzerHelpers::GetNumberString(frame.mData2,
                                              Hexadecimal,
-                                             SPI_FLASH_ADDR_BITS_8,
+                                             SPI_FLASH_CMD_BITS,
                                              number_str,
                                              SPI_FLASH_NUMSTR_BUF_SIZE);
             AddResultString("[", number_str, "]");
         }
         else
         {
-            size_t i;
-            U8 b = cmd->GetCode();
-            AnalyzerHelpers::GetNumberString(b, Hexadecimal, 8, number_str, SPI_FLASH_NUMSTR_BUF_SIZE);
-            for (i = 0; i < cmd->NameCount(); ++i)
+            AnalyzerHelpers::GetNumberString(cmd->GetCode(),
+                                             Hexadecimal,
+                                             SPI_FLASH_CMD_BITS,
+                                             number_str,
+                                             SPI_FLASH_NUMSTR_BUF_SIZE);
+            for (size_t i = 0; i < cmd->NameCount(); ++i)
             {
                 AddResultString(cmd->mNames[i]);
             }
@@ -413,13 +415,13 @@ void SpiFlashAnalyzerResults::GenerateBubbleText(U64 frame_index, Channel &chann
         U8 mosi    = U8(frame.mData1 & 0xFF);
         AnalyzerHelpers::GetNumberString(mosi,
                                          display_base,
-                                         SPI_FLASH_ADDR_BITS_8,
+                                         SPI_FLASH_DATA_BITS,
                                          number_str,
                                          SPI_FLASH_NUMSTR_BUF_SIZE);
         char offset_str[SPI_FLASH_OFFSETSTR_BUF_SIZE];
         AnalyzerHelpers::GetNumberString(offset,
                                          Decimal,
-                                         SPI_FLASH_ADDR_BITS_32,
+                                         SPI_FLASH_DATA_OFFSET_BITS,
                                          offset_str,
                                          SPI_FLASH_OFFSETSTR_BUF_SIZE);
         AddResultString(number_str);
@@ -438,7 +440,7 @@ void SpiFlashAnalyzerResults::GenerateBubbleText(U64 frame_index, Channel &chann
         AddResultString("M");
         AnalyzerHelpers::GetNumberString(frame.mData1,
                                          Hexadecimal,
-                                         8,
+                                         SPI_FLASH_MODE_BITS,
                                          number_str,
                                          SPI_FLASH_NUMSTR_BUF_SIZE);
         AddResultString(number_str);
@@ -450,13 +452,13 @@ void SpiFlashAnalyzerResults::GenerateBubbleText(U64 frame_index, Channel &chann
         U8 miso    = U8(frame.mData2 & 0xFF);
         AnalyzerHelpers::GetNumberString(miso,
                                          display_base,
-                                         SPI_FLASH_ADDR_BITS_8,
+                                         SPI_FLASH_DATA_BITS,
                                          number_str,
                                          SPI_FLASH_NUMSTR_BUF_SIZE);
         char offset_str[SPI_FLASH_OFFSETSTR_BUF_SIZE];
         AnalyzerHelpers::GetNumberString(offset,
                                          Decimal,
-                                         SPI_FLASH_ADDR_BITS_32,
+                                         SPI_FLASH_DATA_OFFSET_BITS,
                                          offset_str,
                                          SPI_FLASH_OFFSETSTR_BUF_SIZE);
         AddResultString(number_str);

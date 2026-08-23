@@ -345,18 +345,24 @@ void SpiFlashSimulationDataGenerator::GenerateCommandBits(SpiFlash &flash, const
     }
 
     // Generate data for commands that have it
-    dataIn = (cmd->mCmdOp == OP_REG_READ || cmd->mCmdOp == OP_DATA_READ);
-    switch (cmd->mCmdOp)
+    dataIn = (cmd->mCmdOp == OP_READ);
+    switch (cmd->mCmdKind)
     {
-    case OP_REG_READ:
-    case OP_REG_WRITE:
+    case KIND_REG:
         // For Register read or write just one or to bytes
         n = (int)cmd->RegisterCount();
         break;
-    case OP_DATA_READ:
-    case OP_DATA_WRITE:
+    case KIND_DATA:
+    case KIND_OTHER:
         // For data read or write generate up to 50 bytes
-        n = SPI_FLASH_DATA_MIN + rand() % SPI_FLASH_DATA_MAX;
+        if (cmd->mCmdOp == OP_READ || cmd->mCmdOp == OP_WRITE)
+        {
+            n = SPI_FLASH_DATA_MIN + rand() % SPI_FLASH_DATA_MAX;
+        }
+        else
+        {
+            n = 0;
+        }
         break;
     default:
         // Commands does not have any additional data

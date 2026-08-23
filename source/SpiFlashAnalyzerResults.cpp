@@ -143,13 +143,19 @@ static bool GetTabularDataOperation(const SpiCmdData *cmd, const char *&operatio
         return false;
     }
 
-    if (cmd->mCmdOp == OP_DATA_READ)
+    // TODO: track packet state to filter out non-flash-data based output
+    //if (!cmd->IsTabularData())
+    //{
+    //    return false;
+    //}
+
+    if (cmd->mCmdOp == OP_READ)
     {
         operation = "RD";
         return true;
     }
 
-    if (cmd->mCmdOp == OP_DATA_WRITE)
+    if (cmd->mCmdOp == OP_WRITE)
     {
         operation = "WR";
         return true;
@@ -320,9 +326,8 @@ void SpiFlashAnalyzerResults::GenerateBubbleText(U64 frame_index, Channel &chann
         const SpiCmdData *cmd = reinterpret_cast<const SpiCmdData *>(frame.mData2);
         if (U64(cmd) > SPI_FLASH_INVALID_CMD)
         {
-            size_t i;
             const char *s[4] = { 0 };
-            for (i = 0; i < cmd->NameCount(); ++i)
+            for (size_t i = 0; i < cmd->NameCount(); ++i)
             {
                 AddResultString(cmd->mNames[i]);
             }
@@ -335,7 +340,7 @@ void SpiFlashAnalyzerResults::GenerateBubbleText(U64 frame_index, Channel &chann
                 AnalyzerHelpers::GetNumberString(addr, Hexadecimal, AddressBits(addr), number_str, SPI_FLASH_NUMSTR_BUF_SIZE);
             }
 
-            if (cmd->mCmdOp == OP_DATA_READ || cmd->mCmdOp == OP_DATA_WRITE)
+            if (cmd->HasBytePayload())
             {
                 s[2] = "  Bytes:";
                 s[3] = number_str2;

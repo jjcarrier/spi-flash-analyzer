@@ -95,17 +95,25 @@ enum CmdMode
 
 enum CmdOp
 {
-    OP_NO_DATA,
-    OP_REG_READ,
-    OP_REG_WRITE,
-    OP_DATA_READ,
-    OP_DATA_WRITE
+    OP_READ,
+    OP_WRITE,
+    OP_ERASE,
+    OP_OTHER
+};
+
+enum CmdKind
+{
+    KIND_DATA,
+    KIND_REG,
+    KIND_CTRL,
+    KIND_OTHER
 };
 
 struct SpiCmdData
 {
     uint8_t mCode;
     uint8_t mMode;
+    CmdKind mCmdKind;
     CmdOp mCmdOp;
     uint8_t mAddressBits;
     uint8_t mModeArgs;
@@ -141,6 +149,22 @@ struct SpiCmdData
     bool IsValidForMode(BusMode mode) const
     {
         return (mMode & static_cast<uint8_t>(mode)) != 0;
+    }
+
+    bool HasBytePayload() const
+    {
+        return (mCmdKind == KIND_DATA || mCmdKind == KIND_OTHER) &&
+               (mCmdOp == OP_READ || mCmdOp == OP_WRITE);
+    }
+
+    bool HasRegisterPayload() const
+    {
+        return mCmdKind == KIND_REG && (mCmdOp == OP_READ || mCmdOp == OP_WRITE);
+    }
+
+    bool IsTabularData() const
+    {
+        return mCmdKind == KIND_DATA && (mCmdOp == OP_READ || mCmdOp == OP_WRITE);
     }
 
     size_t NameCount() const

@@ -839,53 +839,64 @@ void SpiFlashAnalyzer::AnalyzeCommandBits()
             // Change bus mode if command require change for data phase
             UpdateBusMode(BusMode(cmd.data->mModeData));
 
-            switch (cmd.data->mCmdOp)
+            switch (cmd.data->mCmdKind)
             {
-            case OP_DATA_WRITE:
-                while (ExtractBits(start, end, val, 8) >= 0)
+            case KIND_DATA:
+            case KIND_OTHER:
+                if (cmd.data->mCmdOp == OP_WRITE)
                 {
-                    // Pack the per-command byte offset into mData1
-                    U64 packed = (U64(mInOutOffset) << 8) | U64(val);
-                    AddFrame(start, end, packed, 0, FT_OUT_BYTE, 0);
-                    cmdExtra++;
-                    ++mInOutOffset;
+                    while (ExtractBits(start, end, val, 8) >= 0)
+                    {
+                        // Pack the per-command byte offset into mData1
+                        U64 packed = (U64(mInOutOffset) << 8) | U64(val);
+                        AddFrame(start, end, packed, 0, FT_OUT_BYTE, 0);
+                        cmdExtra++;
+                        ++mInOutOffset;
+                    }
+                }
+                else if (cmd.data->mCmdOp == OP_READ)
+                {
+                    mDirIn = true;
+                    while (ExtractBits(start, end, val, 8) >= 0)
+                    {
+                        // Pack the per-command byte offset into mData1
+                        U64 packed = (U64(mInOutOffset) << 8) | U64(val);
+                        AddFrame(start, end, 0, packed, FT_IN_BYTE, 0);
+                        cmdExtra++;
+                        ++mInOutOffset;
+                    }
                 }
                 break;
-            case OP_DATA_READ:
-                mDirIn = true;
-                while (ExtractBits(start, end, val, 8) >= 0)
+            case KIND_REG:
+                if (cmd.data->mCmdOp == OP_WRITE)
                 {
-                    // Pack the per-command byte offset into mData1
-                    U64 packed = (U64(mInOutOffset) << 8) | U64(val);
-                    AddFrame(start, end, 0, packed, FT_IN_BYTE, 0);
-                    cmdExtra++;
-                    ++mInOutOffset;
+                    while (ExtractBits(start, end, val, 8) >= 0)
+                    {
+                        AddFrame(start,
+                                 end,
+                                 val,
+                                 reinterpret_cast<U64>(cmd.data->GetRegister(size_t(cmdExtra))),
+                                 FT_OUT_REG,
+                                 0);
+                        cmdExtra++;
+                    }
+                }
+                else if (cmd.data->mCmdOp == OP_READ)
+                {
+                    mDirIn = true;
+                    while (ExtractBits(start, end, val, 8) >= 0)
+                    {
+                        AddFrame(start,
+                                 end,
+                                 reinterpret_cast<U64>(cmd.data->GetRegister(size_t(cmdExtra))),
+                                 val,
+                                 FT_IN_REG,
+                                 0);
+                        cmdExtra++;
+                    }
                 }
                 break;
-            case OP_REG_WRITE:
-                while (ExtractBits(start, end, val, 8) >= 0)
-                {
-                    AddFrame(start,
-                             end,
-                             val,
-                             reinterpret_cast<U64>(cmd.data->GetRegister(size_t(cmdExtra))),
-                             FT_OUT_REG,
-                             0);
-                    cmdExtra++;
-                }
-                break;
-            case OP_REG_READ:
-                mDirIn = true;
-                while (ExtractBits(start, end, val, 8) >= 0)
-                {
-                    AddFrame(start,
-                             end,
-                             reinterpret_cast<U64>(cmd.data->GetRegister(size_t(cmdExtra))),
-                             val,
-                             FT_IN_REG,
-                             0);
-                    cmdExtra++;
-                }
+            default:
                 break;
             }
 

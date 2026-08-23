@@ -2,15 +2,26 @@
 
 A SPI Flash Analyzer Plugin for Saleae Logic software.
 
+> [!NOTE]
+> The lookup tables are undergoing a complete review and rework to help improve
+> compatibility and future extension. During this time some instructions may
+> not function/decode correctly. Some possible areas that may not work as
+> intended are: dummy byte/cycle handling on a per vendor/config basis,
+> determination of which commands are supported by QPI and/or SPI mode.
+
 ## Features
 
-- Support single, dual, and quad-line SPI mode
-- Handles dynamic changing between single and quad or dual mode detected based on commands
-- Decodes status register bit fields
-- SPI0 and SPI3 mode
-- Continuous read mode handling
-- FrameV2 format supported
-- The following manufacturers command sets are supported:
+- [X] Support single, dual, and quad-line SPI mode
+- [X] Support QPI mode (command sent over 4-lanes)
+- [X] Support DTR mode (command sent over 2-lanes)
+- [X] Handles dynamic changing between SPI and QPI mode based on commands
+- [X] Decodes status register bit fields
+- [X] SPI0 and SPI3 mode
+- [X] Continuous read mode handling
+- [X] FrameV2 format supported
+- [X] Support raw read/write data dump to tabular text
+
+The following manufacturers command sets are supported:
   - Winbond
   - Macronix
   - Renesas
@@ -56,6 +67,14 @@ Settings
   final line. This may manifest itself in other locations. This issue has not
   been investigated in great detail yet to know if this is an issue of the
   Logic software itself or the plugin.
+- The plugin makes use of at least one global variable which may result in
+  abnormal behavior in multi-instance usage.
+- Dummy bits are likely not handled correctly in some use-cases. Some modes
+  may depend on a settings register to determine correct dummy-cycle setting,
+  some commands depend on SPI/DPI/QPI modes, others may depend on communication
+  frequency. It is likely the plugin will require additional user-settings to
+  provide required flexibility for initial state and then monitor for changes at
+  run time.
 
 ## Bug Reporting & Feature Requests
 

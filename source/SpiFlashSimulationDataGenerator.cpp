@@ -281,9 +281,9 @@ void SpiFlashSimulationDataGenerator::GenerateCommandBits(SpiFlash &flash, const
     }
 
     // if bus width changes after command code change current bus mode
-    if (cmd->mModeArgs)
+    if (cmd->mAddrMode)
     {
-        curBusMode = NormalizeBusMode(cmd->mModeArgs);
+        curBusMode = NormalizeBusMode(cmd->mAddrMode);
     }
 
     // generate address
@@ -338,10 +338,10 @@ void SpiFlashSimulationDataGenerator::GenerateCommandBits(SpiFlash &flash, const
         }
     }
 
-    // Switch do other bus mode if this is 1-1-2 or 1-1-4 command
-    if (cmd->mModeData)
+    // Switch to other bus mode if this is 1-1-2 or 1-1-4 command
+    if (cmd->mDataMode)
     {
-        curBusMode = NormalizeBusMode(cmd->mModeData);
+        curBusMode = NormalizeBusMode(cmd->mDataMode);
     }
 
     // Generate data for commands that have it
@@ -377,9 +377,9 @@ void SpiFlashSimulationDataGenerator::GenerateCommandBits(SpiFlash &flash, const
 
     // If command changed bus mode update it
     // (commands like Enter/Exit QPI mode)
-    if (cmd->mModeChange)
+    if (cmd->mNewMode)
     {
-        defBusMode = NormalizeBusMode(cmd->mModeChange);
+        defBusMode = NormalizeBusMode(cmd->mNewMode);
     }
 
     flash.SetDefaultBusMode(defBusMode);

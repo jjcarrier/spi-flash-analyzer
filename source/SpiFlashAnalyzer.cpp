@@ -335,7 +335,7 @@ void SpiFlashAnalyzer::Setup()
         if (cmd != NULL)
         {
             mContinuousReadCmd = cmd;
-            mCurrentBusMode    = BusMode(cmd->mModeData);
+            mCurrentBusMode    = BusMode(cmd->mDataMode);
         }
     }
     mCachedClockCount = 0;
@@ -776,7 +776,7 @@ void SpiFlashAnalyzer::AnalyzeCommandBits()
 
         if (cmd.code > SPI_FLASH_INVALID_CMD)
         {
-            UpdateBusMode((BusMode)cmd.data->mModeArgs);
+            UpdateBusMode((BusMode)cmd.data->mAddrMode);
 
             if (cmd.data->mAddressBits)
             {
@@ -837,7 +837,7 @@ void SpiFlashAnalyzer::AnalyzeCommandBits()
             }
 
             // Change bus mode if command require change for data phase
-            UpdateBusMode(BusMode(cmd.data->mModeData));
+            UpdateBusMode(BusMode(cmd.data->mDataMode));
 
             switch (cmd.data->mCmdKind)
             {
@@ -901,8 +901,8 @@ void SpiFlashAnalyzer::AnalyzeCommandBits()
             }
 
             // Commands like Enter QPI or Exit QPI change bus mode
-            if (cmd.data->mModeChange)
-                mDefaultBusMode = BusMode(cmd.data->mModeChange);
+            if (cmd.data->mNewMode)
+                mDefaultBusMode = BusMode(cmd.data->mNewMode);
         }
         else if (cmd.code < 0x100)
         {

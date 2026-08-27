@@ -83,14 +83,15 @@ enum BusMode
 
 enum CmdMode
 {
-    CM_1   = BusMode::SINGLE,
-    CM_2   = BusMode::DUAL,
-    CM_4   = BusMode::QUAD,
-    CM_12  = (BusMode::SINGLE | BusMode::DUAL),
-    CM_14  = (BusMode::SINGLE | BusMode::QUAD),
-    CM_24  = (BusMode::DUAL | BusMode::QUAD),
-    CM_124 = (BusMode::SINGLE | BusMode::DUAL | BusMode::QUAD),
-    CM_ALL = CM_124,
+    CM_RESERVED = 0,
+    CM_1    = BusMode::SINGLE,
+    CM_2    = BusMode::DUAL,
+    CM_4    = BusMode::QUAD,
+    CM_12   = (BusMode::SINGLE | BusMode::DUAL),
+    CM_14   = (BusMode::SINGLE | BusMode::QUAD),
+    CM_24   = (BusMode::DUAL | BusMode::QUAD),
+    CM_124  = (BusMode::SINGLE | BusMode::DUAL | BusMode::QUAD),
+    CM_ALL  = CM_124,
 };
 
 enum CmdOp
@@ -109,6 +110,30 @@ enum CmdKind
     KIND_OTHER
 };
 
+enum AddrMode
+{
+    AM_KEEP   = 0,
+    AM_SINGLE = BusMode::SINGLE,
+    AM_DUAL   = BusMode::DUAL,
+    AM_QUAD   = BusMode::QUAD
+};
+
+enum DataMode
+{
+    DM_KEEP   = 0,
+    DM_SINGLE = BusMode::SINGLE,
+    DM_DUAL   = BusMode::DUAL,
+    DM_QUAD   = BusMode::QUAD
+};
+
+enum NewMode
+{
+    NM_KEEP   = 0,
+    NM_SINGLE = BusMode::SINGLE,
+    NM_DUAL   = BusMode::DUAL,
+    NM_QUAD   = BusMode::QUAD
+};
+
 struct SpiCmdData
 {
     uint8_t mCode;
@@ -116,9 +141,9 @@ struct SpiCmdData
     CmdKind mCmdKind;
     CmdOp mCmdOp;
     uint8_t mAddressBits;
-    uint8_t mModeArgs;
-    uint8_t mModeData;
-    uint8_t mModeChange;
+    uint8_t mAddrMode;
+    uint8_t mDataMode;
+    uint8_t mNewMode;
     uint8_t mDummyCount;
     bool mDummyBytes;
     bool mDummyCycles;

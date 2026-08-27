@@ -38,15 +38,15 @@
 //   4. The kCmdSets master table
 //
 // SpiCmdData aggregate-init column order:
-//   { code, mode, cmdKind, cmdOp, addrBits, modeArgs, modeData, modeChange,
+//   { code, mode, cmdKind, cmdOp, addrBits, addrMode, dataMode, newMode,
 //     dummyCount, dummyBytes, dummyCycles, contRead,
 //     {name0, name1, name2, name3},
 //     {reg0,  reg1,  reg2,  reg3 } }
 //
 //   addrBits: 0=none, 0xFF=use configured address width, 16=explicit 16-bit.
-//   modeArgs: address/mode-byte phase I/O width (0=single, 2=dual, 4=quad).
-//   modeData: data phase I/O width (0=single, 2=dual, 4=quad).
-//   modeChange: switch bus mode after command (0=none, CM_1, CM_4).
+//   addrMode: address/mode-byte phase I/O width (0=keep, 1=single, 2=dual, 4=quad).
+//   dataMode: data phase I/O width (0=keep, 1=single, 2=dual, 4=quad).
+//   newMode: switch bus mode after command (0=keep, 1=single, 2=dual, 4=quad).
 // ---------------------------------------------------------------------------
 
 static constexpr uint8_t kAddrGlobal = 0xFF; // use configured address width
@@ -70,7 +70,7 @@ static const RegisterData kSR1_Common = { "SR1", 8, kBits_SR1_Common, 3 };
 static const RegisterData kSR2_Common = { "SR2", 8, kBits_SR2_Common, 3 };
 
 static const SpiCmdData kCmds_Common[] = {
-    /* mCode, mMode, mCmdKind, mCmdOp, mAddressBits, mModeArgs, mModeData, mModeChange, mDummyCount, mDummyBytes, mDummyCycles, mContinuousRead, nNames[], mRegList[] */
+    /* mCode, mMode, mCmdKind, mCmdOp, mAddressBits,  mAddrMode, mDataMode, mNewMode, mDummyCount, mDummyBytes, mDummyCycles, mContinuousRead, nNames[], mRegList[] */
     { 0x01, CM_14, KIND_REG,   OP_WRITE, 0,           0, 0, 0, 0, false, false, false, { "WRSR", "Write SR", nullptr, nullptr },                     { &kSR1_Common, &kSR2_Common, nullptr, nullptr } },
     { 0x02, CM_14, KIND_DATA,  OP_WRITE, kAddrGlobal, 0, 0, 0, 0, false, false, false, { "PP", "Page Program", nullptr, nullptr },                   { nullptr, nullptr, nullptr, nullptr }           },
     { 0x03, CM_1,  KIND_DATA,  OP_READ,  kAddrGlobal, 0, 0, 0, 0, false, false, false, { "RD", "Read Data", nullptr, nullptr },                      { nullptr, nullptr, nullptr, nullptr }           },

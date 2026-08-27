@@ -130,9 +130,9 @@ SpiFlashAnalyzerSettings::SpiFlashAnalyzerSettings()
 
     mBusModeInterface.reset(new AnalyzerSettingInterfaceNumberList());
     mBusModeInterface->SetTitleAndTooltip("Start in", "Number of lines used for command transmission");
-    mBusModeInterface->AddNumber(1, "Single", "");
-    mBusModeInterface->AddNumber(2, "Dual", "");
-    mBusModeInterface->AddNumber(4, "Quad", "");
+    mBusModeInterface->AddNumber(1, "Enhanced-SPI Mode", "");
+    mBusModeInterface->AddNumber(2, "Dual-SPI Mode (DPI)", "");
+    mBusModeInterface->AddNumber(4, "Quad-SPI Mode (QPI)", "");
     mBusModeInterface->SetNumber(mBusMode);
 
     mContinuousReadInterface.reset(new AnalyzerSettingInterfaceNumberList());

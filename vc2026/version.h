@@ -5,7 +5,7 @@
 #define VERSION_MAJOR   1
 #endif
 #ifndef VERSION_MINOR
-#define VERSION_MINOR   0
+#define VERSION_MINOR   1
 #endif
 #ifndef VERSION_3
 #define VERSION_3       0
@@ -15,7 +15,7 @@
 #endif
 
 #ifndef VERSION_STRING
-#define VERSION_STRING  "1.0.0.0"
+#define VERSION_STRING  "1.1.0.0"
 #endif
 
 #endif

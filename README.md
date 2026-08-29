@@ -13,7 +13,9 @@ A SPI Flash Analyzer Plugin for Saleae Logic software.
 
 - [X] Support single, dual, and quad-line SPI mode
 - [X] Support QPI mode (command sent over 4-lanes)
-- [X] Support DTR mode (command sent over 2-lanes)
+- [X] Support DPI mode (command sent over 2-lanes)
+- [ ] Support DTR mode
+- [ ] Support 4-byte addressing command-sets (for ICs supporting with more than 128Mb of storage)
 - [X] Handles dynamic changing between SPI and QPI mode based on commands
 - [X] Decodes status register bit fields
 - [X] SPI0 and SPI3 mode
